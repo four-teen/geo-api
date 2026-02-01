@@ -21,6 +21,15 @@ class BowPatient extends Model
     protected $table = 'bow_tbl_patients';
     protected $primaryKey = 'patient_id';
 
+    /**
+     * ============================================================================
+     * MASS ASSIGNABLE FIELDS
+     * ----------------------------------------------------------------------------
+     * is_senior:
+     * - Manual senior citizen flag
+     * - NOT auto-computed from age
+     * ============================================================================
+     */
     protected $fillable = [
         'last_name',
         'first_name',
@@ -30,6 +39,7 @@ class BowPatient extends Model
         'marital_status',
         'spouse_name',
         'is_pwd',
+        'is_senior', 
         'contact_number',
         'barangay_id',
         'purok_id',

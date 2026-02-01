@@ -85,6 +85,7 @@ public function getByBarangay($barangay_id)
             'p.spouse_name',
             'p.contact_number',
             'p.is_pwd',
+            'p.is_senior',
             'p.status',
             'p.purok_id',
             'pr.purok_name'
@@ -114,6 +115,7 @@ public function getByBarangay($barangay_id)
             'spouse_name'     => 'nullable|string|max:150',
 
             'is_pwd'          => 'required|boolean',
+            'is_senior'       => 'nullable|boolean',
             'contact_number'  => 'nullable|string|max:30',
 
             'barangay_id'     => 'required|exists:bow_tbl_barangays,barangay_id',
@@ -174,6 +176,7 @@ public function getByBarangay($barangay_id)
             'spouse_name'     => 'nullable|string|max:150',
 
             'is_pwd'          => 'required|boolean',
+            'is_senior'       => 'nullable|boolean',
             'contact_number'  => 'nullable|string|max:30',
 
             'barangay_id'     => 'required|exists:bow_tbl_barangays,barangay_id',

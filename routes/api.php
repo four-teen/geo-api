@@ -263,7 +263,14 @@ Route::patch(
 
     });
 
+    Route::middleware('auth:sanctum')->group(function () {
 
+        Route::resource(
+            'bow/physician',
+            \App\Http\Controllers\Api\Bow\PhysicianController::class
+        );
+
+    });    
     
 // END BOTIKA ON WHEELS ROUTES
 
