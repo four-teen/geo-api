@@ -24,6 +24,7 @@ use App\Http\Controllers\Controller;
 use App\Models\BowPatient;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
+use Illuminate\Support\Facades\DB;
 
 class PatientController extends Controller
 {
@@ -96,6 +97,52 @@ public function getByBarangay($barangay_id)
 
     return response()->json($patients);
 }
+
+/**
+ * ============================================================================
+ * SHOW SINGLE PATIENT (USED BY PRESCRIPTION MODULE)
+ * ----------------------------------------------------------------------------
+ * Route : GET /api/bow/patient/{id}
+ * Purpose:
+ * - Fetch patient name and basic fields by patient_id
+ * - Used in Add Prescription modal header display
+ * ============================================================================
+ */
+public function show($id)
+{
+    $patient = DB::table('bow_tbl_patients')
+        ->select(
+            'patient_id',
+            'last_name',
+            'first_name',
+            'middle_name',
+            'birthdate',
+            'sex',
+            'marital_status',
+            'spouse_name',
+            'is_pwd',
+            'is_senior',
+            'contact_number',
+            'barangay_id',
+            'purok_id',
+            'status',
+            'created_at',
+            'updated_at'
+        )
+        ->where('patient_id', $id)
+        ->first();
+
+    if (!$patient) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Patient not found.'
+        ], 404);
+    }
+
+    // Return raw patient object (consistent with getByBarangay style)
+    return response()->json($patient);
+}
+
 
 
     /**

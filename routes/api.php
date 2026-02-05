@@ -270,7 +270,52 @@ Route::patch(
             \App\Http\Controllers\Api\Bow\PhysicianController::class
         );
 
-    });    
+    });   
+    
+    Route::middleware('auth:sanctum')->group(function () {
+
+        Route::resource(
+            'bow/medicine',
+            \App\Http\Controllers\Api\Bow\MedicineController::class
+        );
+
+        Route::patch(
+            'bow/medicine/{id}/status',
+            [\App\Http\Controllers\Api\Bow\MedicineController::class, 'toggleStatus']
+        );
+
+    });
+
+    Route::middleware('auth:sanctum')->group(function () {
+
+        Route::get(
+            'bow/prescription/by-patient/{patient_id}',
+            [\App\Http\Controllers\Api\Bow\PrescriptionController::class, 'getByPatient']
+        );
+
+    });
+    
+    Route::middleware('auth:sanctum')->post(
+        'bow/prescription',
+        [\App\Http\Controllers\Api\Bow\PrescriptionController::class, 'store']
+    );
+
+    Route::middleware('auth:sanctum')->group(function () {
+
+        Route::get(
+            'bow/dashboard/community-health',
+            [\App\Http\Controllers\Api\Bow\DashboardStatsController::class, 'communityHealthSnapshot']
+        );
+
+        Route::get(
+            'bow/dashboard/top-counts',
+            [\App\Http\Controllers\Api\Bow\DashboardStatsController::class, 'topCardCounts']
+        );
+
+
+    });
+
+
     
 // END BOTIKA ON WHEELS ROUTES
 
