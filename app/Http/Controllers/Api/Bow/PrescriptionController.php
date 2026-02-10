@@ -127,19 +127,36 @@ public function store(Request $request)
         'items.*.qty' => 'required|numeric|min:1',
         'items.*.direction' => 'required|string',
         'items.*.good_for_days' => 'required|integer|min:1',
+        'blood_pressure' => 'nullable|string',
+        'heart_rate' => 'nullable|numeric',
+        'body_temperature' => 'nullable|numeric',
+        'height_cm' => 'nullable|numeric',
+        'weight_kg' => 'nullable|numeric',
+        'diagnosis' => 'nullable|string',
     ]);
 
     return \DB::transaction(function () use ($request) {
 
         // 1. Create prescription header
-        $prescriptionId = \DB::table('bow_tbl_prescriptions')->insertGetId([
-            'patient_id' => $request->patient_id,
-            'physician_id' => $request->physician_id,
-            'remarks' => $request->remarks,
-            'date_released' => now(),
-            'created_at' => now(),
-            'updated_at' => now(),
-        ]);
+$prescriptionId = \DB::table('bow_tbl_prescriptions')->insertGetId([
+    'patient_id'       => $request->patient_id,
+    'physician_id'     => $request->physician_id,
+
+    'blood_pressure'   => $request->blood_pressure,
+    'heart_rate'       => $request->heart_rate,
+    'body_temperature' => $request->body_temperature,
+    'height_cm'        => $request->height_cm,
+    'weight_kg'        => $request->weight_kg,
+
+    'diagnosis'        => $request->diagnosis,
+    'remarks'          => $request->remarks,
+
+    'date_released'    => now(),
+    'created_at'       => now(),
+    'updated_at'       => now(),
+]);
+
+
 
         // 2. Process items + deduct inventory
         foreach ($request->items as $item) {
@@ -185,6 +202,98 @@ public function store(Request $request)
     });
 }
 
+
+/**
+ * ============================================================
+ * GET FULL PRESCRIPTION DETAILS (HEADER + ITEMS)
+ * ------------------------------------------------------------
+ * Route : GET bow/prescription/{prescription_id}
+ * Access: Authenticated (Sanctum)
+ *
+ * Returns:
+ * - prescription header (vitals + diagnosis + remarks + date)
+ * - physician full name
+ * - patient full name + barangay + purok
+ * - items list with medicine_name, qty, direction, good_for_days
+ * ============================================================
+ */
+public function show($prescription_id)
+{
+    // Header + joins for patient/physician/barangay/purok
+    $header = DB::table('bow_tbl_prescriptions as p')
+        ->join('bow_tbl_patients as pt', 'pt.patient_id', '=', 'p.patient_id')
+        ->leftJoin('bow_tbl_barangays as b', 'b.barangay_id', '=', 'pt.barangay_id')
+        ->leftJoin('bow_tbl_puroks as pr', 'pr.purok_id', '=', 'pt.purok_id')
+        ->join('bow_tbl_physicians as ph', 'ph.physician_id', '=', 'p.physician_id')
+        ->where('p.prescription_id', $prescription_id)
+        ->select(
+            'p.prescription_id',
+            'p.patient_id',
+            'p.physician_id',
+            'p.date_released',
+
+            'p.blood_pressure',
+            'p.heart_rate',
+            'p.body_temperature',
+            'p.height_cm',
+            'p.weight_kg',
+
+            'p.diagnosis',
+            'p.remarks',
+
+            DB::raw("CONCAT(
+                pt.first_name, ' ',
+                IF(pt.middle_name IS NOT NULL AND pt.middle_name != '',
+                    CONCAT(pt.middle_name, ' '),
+                    ''
+                ),
+                pt.last_name
+            ) as patient_name"),
+
+            DB::raw("CONCAT(
+                ph.first_name, ' ',
+                IF(ph.middle_name IS NOT NULL AND ph.middle_name != '',
+                    CONCAT(LEFT(ph.middle_name,1), '. '),
+                    ''
+                ),
+                ph.last_name
+            ) as physician_name"),
+
+            'b.barangay_name',
+            'pr.purok_name'
+        )
+        ->first();
+
+    if (!$header) {
+        return response()->json([
+            'status' => 'error',
+            'message' => 'Prescription not found.'
+        ], 404);
+    }
+
+    // Items
+    $items = DB::table('bow_tbl_prescription_items as pi')
+        ->join('bow_tbl_medicines as m', 'm.medicine_id', '=', 'pi.medicine_id')
+        ->where('pi.prescription_id', $prescription_id)
+        ->select(
+            'pi.item_id',
+            'pi.medicine_id',
+            'm.medicine_name',
+            'pi.qty',
+            'pi.direction',
+            'pi.good_for_days'
+        )
+        ->orderBy('pi.item_id', 'ASC')
+        ->get();
+
+    return response()->json([
+        'status' => 'success',
+        'data' => [
+            'header' => $header,
+            'items'  => $items,
+        ]
+    ]);
+}
 
 
 }

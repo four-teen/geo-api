@@ -293,7 +293,14 @@ Route::patch(
             [\App\Http\Controllers\Api\Bow\PrescriptionController::class, 'getByPatient']
         );
 
+        Route::get(
+            'bow/prescription/{prescription_id}',
+            [\App\Http\Controllers\Api\Bow\PrescriptionController::class, 'show']
+        )->whereNumber('prescription_id');
+
     });
+    
+
     
     Route::middleware('auth:sanctum')->post(
         'bow/prescription',
