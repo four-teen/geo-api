@@ -30,7 +30,7 @@ class AdminController extends BaseController
         $input = $request->all();
         $input['password'] = bcrypt($input['password']);
         $user = User::create($input);
-        $success['token'] =  $user->createToken('MyApp')->plainTextToken;
+        $success['token'] = $this->normalizeAccessToken($user->createToken('MyApp')->plainTextToken);
         // $success['username'] =  $user->username;
 
         return $this->sendResponse($success, 'User register successfully.');
@@ -43,7 +43,7 @@ class AdminController extends BaseController
 
         if(Auth::guard('web')->attempt(['email' => $request->email, 'password' => $request->password])){
             $user = Auth::user();
-            $success['token'] =  $user->createToken('MyApp')->plainTextToken;
+            $success['token'] = $this->normalizeAccessToken($user->createToken('MyApp')->plainTextToken);
             $success['name'] =  $user->name;
             $success['id'] =  $user->id;
 
@@ -52,5 +52,16 @@ class AdminController extends BaseController
         else{
             return $this->sendError('Unauthorised.', ['error'=>'Unauthorised']);
         }
+    }
+
+    /**
+     * Normalize Sanctum plainTextToken for environments where token IDs
+     * may be unreliable (e.g., returning "0|...").
+     */
+    private function normalizeAccessToken(string $token): string
+    {
+        return str_contains($token, '|')
+            ? explode('|', $token, 2)[1]
+            : $token;
     }
 }

@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\Bow;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 /**
  * ============================================================================
@@ -123,7 +124,8 @@ public function store(Request $request)
         'remarks' => 'nullable|string',
 
         'items' => 'required|array|min:1',
-        'items.*.medicine_id' => 'required|exists:bow_tbl_medicines,medicine_id',
+        'items.*.medicine_id' => 'nullable|integer|exists:bow_tbl_medicines,medicine_id',
+        'items.*.unavailable_medicine_name' => 'nullable|string|max:255',
         'items.*.qty' => 'required|numeric|min:1',
         'items.*.direction' => 'required|string',
         'items.*.good_for_days' => 'required|integer|min:1',
@@ -135,10 +137,24 @@ public function store(Request $request)
         'diagnosis' => 'nullable|string',
     ]);
 
+    foreach ($request->items as $idx => $item) {
+        $medicineId = $item['medicine_id'] ?? null;
+        $unavailableName = trim($item['unavailable_medicine_name'] ?? '');
+
+        if (!$medicineId && $unavailableName === '') {
+            throw ValidationException::withMessages([
+                "items.$idx.medicine_id" => "Select medicine or enter unavailable medicine name.",
+            ]);
+        }
+    }
+
     return \DB::transaction(function () use ($request) {
 
         // 1. Create prescription header
-$prescriptionId = \DB::table('bow_tbl_prescriptions')->insertGetId([
+        $prescriptionId = $this->nextId('bow_tbl_prescriptions', 'prescription_id');
+
+\DB::table('bow_tbl_prescriptions')->insert([
+    'prescription_id'   => $prescriptionId,
     'patient_id'       => $request->patient_id,
     'physician_id'     => $request->physician_id,
 
@@ -159,40 +175,82 @@ $prescriptionId = \DB::table('bow_tbl_prescriptions')->insertGetId([
 
 
         // 2. Process items + deduct inventory
+        $nextItemId = $this->nextId('bow_tbl_prescription_items', 'item_id');
+
         foreach ($request->items as $item) {
+            $medicineId = $item['medicine_id'] ?? null;
+            $unavailableName = trim($item['unavailable_medicine_name'] ?? '');
 
-            $medicine = \DB::table('bow_tbl_medicines')
-                ->where('medicine_id', $item['medicine_id'])
-                ->lockForUpdate()
-                ->first();
+            if ($medicineId) {
+                $medicine = \DB::table('bow_tbl_medicines')
+                    ->where('medicine_id', $medicineId)
+                    ->lockForUpdate()
+                    ->first();
 
-            if (!$medicine) {
-                throw new \Exception('Medicine not found.');
-            }
+                if (!$medicine) {
+                    throw new \Exception('Medicine not found.');
+                }
 
-            if ($medicine->quantity < $item['qty']) {
-                throw new \Exception(
-                    "Insufficient stock for {$medicine->medicine_name}"
-                );
-            }
+                if ($medicine->quantity < $item['qty']) {
+                    throw new \Exception(
+                        "Insufficient stock for {$medicine->medicine_name}"
+                    );
+                }
 
-            // Insert prescription item
-            \DB::table('bow_tbl_prescription_items')->insert([
-                'prescription_id' => $prescriptionId,
-                'medicine_id' => $item['medicine_id'],
-                'qty' => $item['qty'],
-                'direction' => $item['direction'],
-                'good_for_days' => $item['good_for_days'],
-                'created_at' => now(),
-            ]);
-
-            // Deduct inventory
-            \DB::table('bow_tbl_medicines')
-                ->where('medicine_id', $item['medicine_id'])
-                ->update([
-                    'quantity' => $medicine->quantity - $item['qty'],
-                    'updated_at' => now(),
+                // Insert prescription item (inventory medicine)
+                \DB::table('bow_tbl_prescription_items')->insert([
+                    'item_id' => $nextItemId++,
+                    'prescription_id' => $prescriptionId,
+                    'medicine_id' => $medicineId,
+                    'qty' => $item['qty'],
+                    'direction' => $item['direction'],
+                    'good_for_days' => $item['good_for_days'],
+                    'created_at' => now(),
                 ]);
+
+                // Deduct inventory
+                \DB::table('bow_tbl_medicines')
+                    ->where('medicine_id', $medicineId)
+                    ->update([
+                        'quantity' => $medicine->quantity - $item['qty'],
+                        'updated_at' => now(),
+                    ]);
+            } else {
+                // Resolve / create medicine master record (inactive) for unavailable entry
+                $manualMedicine = \DB::table('bow_tbl_medicines')->whereRaw(
+                    'LOWER(medicine_name) = ?',
+                    [mb_strtolower($unavailableName)]
+                )->first();
+
+                if (!$manualMedicine) {
+                    $manualMedicineId = $this->nextId('bow_tbl_medicines', 'medicine_id');
+
+                    \DB::table('bow_tbl_medicines')->insert([
+                        'medicine_id' => $manualMedicineId,
+                        'medicine_name' => $unavailableName,
+                        'quantity' => 0,
+                        'status' => 'inactive',
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ]);
+
+                    $manualMedicine = (object) [
+                        'medicine_id' => $manualMedicineId,
+                        'medicine_name' => $unavailableName,
+                    ];
+                }
+
+                // Insert prescription item using resolved medicine_id
+                \DB::table('bow_tbl_prescription_items')->insert([
+                    'item_id' => $nextItemId++,
+                    'prescription_id' => $prescriptionId,
+                    'medicine_id' => $manualMedicine->medicine_id,
+                    'qty' => $item['qty'],
+                    'direction' => $item['direction'],
+                    'good_for_days' => $item['good_for_days'],
+                    'created_at' => now(),
+                ]);
+            }
         }
 
         return response()->json([
@@ -273,7 +331,7 @@ public function show($prescription_id)
 
     // Items
     $items = DB::table('bow_tbl_prescription_items as pi')
-        ->join('bow_tbl_medicines as m', 'm.medicine_id', '=', 'pi.medicine_id')
+        ->leftJoin('bow_tbl_medicines as m', 'm.medicine_id', '=', 'pi.medicine_id')
         ->where('pi.prescription_id', $prescription_id)
         ->select(
             'pi.item_id',
@@ -293,6 +351,17 @@ public function show($prescription_id)
             'items'  => $items,
         ]
     ]);
+}
+
+
+/**
+ * Generate next integer PK for legacy tables without AUTO_INCREMENT.
+ */
+private function nextId(string $table, string $idColumn): int
+{
+    $maxId = \DB::table($table)->max($idColumn);
+
+    return ((int) $maxId) + 1;
 }
 
 
