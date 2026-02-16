@@ -87,6 +87,37 @@ class DashboardStatsController extends Controller
         ]);
     }
 
+    /**
+     * ------------------------------------------------------------------------
+     * GET PATIENT COUNTS PER BARANGAY
+     * ------------------------------------------------------------------------
+     * Purpose:
+     * - Dashboard chart dataset
+     * - Includes ACTIVE barangays, with ACTIVE patient counts
+     * ------------------------------------------------------------------------
+     */
+    public function patientsPerBarangay(): JsonResponse
+    {
+        $rows = DB::table('bow_tbl_barangays as b')
+            ->leftJoin('bow_tbl_patients as p', function ($join) {
+                $join->on('p.barangay_id', '=', 'b.barangay_id')
+                    ->where('p.status', 'ACTIVE');
+            })
+            ->where('b.status', 'ACTIVE')
+            ->groupBy('b.barangay_id', 'b.barangay_name')
+            ->orderBy('b.barangay_name', 'ASC')
+            ->select(
+                'b.barangay_id',
+                'b.barangay_name',
+                DB::raw('COUNT(p.patient_id) as patient_count')
+            )
+            ->get();
+
+        return response()->json([
+            'data' => $rows,
+        ]);
+    }
+
 
 
 }

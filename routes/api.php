@@ -319,6 +319,11 @@ Route::patch(
             [\App\Http\Controllers\Api\Bow\DashboardStatsController::class, 'topCardCounts']
         );
 
+        Route::get(
+            'bow/dashboard/patients-per-barangay',
+            [\App\Http\Controllers\Api\Bow\DashboardStatsController::class, 'patientsPerBarangay']
+        );
+
 
     });
 
