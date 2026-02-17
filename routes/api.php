@@ -5,6 +5,7 @@ use Illuminate\Support\Facades\Route;
 
 //Admin
 use App\Http\Controllers\Api\Admin\AdminController;
+use App\Http\Controllers\Api\Admin\AccountManagementController;
 use App\Http\Controllers\Api\Admin\Areas\AreasController;
 use App\Http\Controllers\Api\Admin\LivestockCharges\LivestockChargesController;
 use App\Http\Controllers\Api\Admin\SlaughterPrivate\SLPrivate;
@@ -46,8 +47,25 @@ use App\Http\Controllers\PrivateTransactionController;
 //Admin Routes
 Route::controller(AdminController::class)->group(function () {
     Route::post('admin/login', 'login');
-    Route::post('admin/register', 'register');
 });
+
+Route::middleware(['auth:sanctum', 'active', 'role:administrator'])
+    ->controller(AdminController::class)
+    ->group(function () {
+        Route::post('admin/register', 'register');
+});
+
+Route::middleware(['auth:sanctum', 'active', 'role:administrator'])
+    ->controller(AccountManagementController::class)
+    ->group(function () {
+        Route::get('admin/accounts/options', 'options');
+        Route::get('admin/accounts', 'index');
+        Route::post('admin/accounts', 'store');
+        Route::get('admin/accounts/{id}', 'show')->whereNumber('id');
+        Route::put('admin/accounts/{id}', 'update')->whereNumber('id');
+        Route::patch('admin/accounts/{id}', 'update')->whereNumber('id');
+        Route::delete('admin/accounts/{id}', 'destroy')->whereNumber('id');
+    });
 
 Route::middleware('auth:sanctum')->group(function () {
     Route::resource('admin/area', AreasController::class);
@@ -220,23 +238,54 @@ Route::patch(
 
 // START BOTIKA ON WHEELS ROUTES
 
-    Route::middleware('auth:sanctum')->group(function () {
-
-        Route::resource(
+Route::middleware(['auth:sanctum', 'active'])->group(function () {
+    // READ access (button-level controls are enforced in frontend; write actions below stay protected)
+    Route::middleware('permission:bow.manage_barangay_purok,bow.manage_patients,bow.add_prescription,bow.monitoring')->group(function () {
+        Route::get(
             'bow/barangay',
-            \App\Http\Controllers\Api\Bow\BarangayController::class
-        );
-
-        Route::resource(
-            'bow/purok',
-            \App\Http\Controllers\Api\Bow\PurokController::class
+            [\App\Http\Controllers\Api\Bow\BarangayController::class, 'index']
         );
 
         Route::get(
             'bow/purok/by-barangay/{barangay_id}',
             [\App\Http\Controllers\Api\Bow\PurokController::class, 'getByBarangay']
-        );
+        )->whereNumber('barangay_id');
+    });
 
+    Route::middleware('permission:bow.manage_barangay_purok')->group(function () {
+        Route::post(
+            'bow/barangay',
+            [\App\Http\Controllers\Api\Bow\BarangayController::class, 'store']
+        );
+        Route::put(
+            'bow/barangay/{id}',
+            [\App\Http\Controllers\Api\Bow\BarangayController::class, 'update']
+        )->whereNumber('id');
+        Route::patch(
+            'bow/barangay/{id}',
+            [\App\Http\Controllers\Api\Bow\BarangayController::class, 'update']
+        )->whereNumber('id');
+        Route::delete(
+            'bow/barangay/{id}',
+            [\App\Http\Controllers\Api\Bow\BarangayController::class, 'destroy']
+        )->whereNumber('id');
+
+        Route::post(
+            'bow/purok',
+            [\App\Http\Controllers\Api\Bow\PurokController::class, 'store']
+        );
+        Route::put(
+            'bow/purok/{id}',
+            [\App\Http\Controllers\Api\Bow\PurokController::class, 'update']
+        )->whereNumber('id');
+        Route::patch(
+            'bow/purok/{id}',
+            [\App\Http\Controllers\Api\Bow\PurokController::class, 'update']
+        )->whereNumber('id');
+        Route::delete(
+            'bow/purok/{id}',
+            [\App\Http\Controllers\Api\Bow\PurokController::class, 'destroy']
+        )->whereNumber('id');
     });
 
 
@@ -249,49 +298,92 @@ Route::patch(
      * - Explicit by-barangay route (consistent with purok pattern)
      * ============================================================================
      */
-    Route::middleware('auth:sanctum')->group(function () {
-
-        Route::resource(
+    Route::middleware('permission:bow.manage_patients,bow.add_prescription,bow.monitoring')->group(function () {
+        Route::get(
             'bow/patient',
-            \App\Http\Controllers\Api\Bow\PatientController::class
+            [\App\Http\Controllers\Api\Bow\PatientController::class, 'index']
         );
-
         Route::get(
             'bow/patient/by-barangay/{barangay_id}',
             [\App\Http\Controllers\Api\Bow\PatientController::class, 'getByBarangay']
-        );
-
+        )->whereNumber('barangay_id');
+        Route::get(
+            'bow/patient/{id}',
+            [\App\Http\Controllers\Api\Bow\PatientController::class, 'show']
+        )->whereNumber('id');
     });
 
-    Route::middleware('auth:sanctum')->group(function () {
+    Route::middleware('permission:bow.manage_patients')->group(function () {
+        Route::post(
+            'bow/patient',
+            [\App\Http\Controllers\Api\Bow\PatientController::class, 'store']
+        );
+        Route::put(
+            'bow/patient/{id}',
+            [\App\Http\Controllers\Api\Bow\PatientController::class, 'update']
+        )->whereNumber('id');
+        Route::patch(
+            'bow/patient/{id}',
+            [\App\Http\Controllers\Api\Bow\PatientController::class, 'update']
+        )->whereNumber('id');
+        Route::delete(
+            'bow/patient/{id}',
+            [\App\Http\Controllers\Api\Bow\PatientController::class, 'destroy']
+        )->whereNumber('id');
+    });
 
-        Route::resource(
+    Route::middleware('permission:bow.manage_physicians,bow.add_prescription,bow.monitoring')->get(
+        'bow/physician',
+        [\App\Http\Controllers\Api\Bow\PhysicianController::class, 'index']
+    );
+
+    Route::middleware('permission:bow.manage_physicians')->group(function () {
+        Route::post(
             'bow/physician',
-            \App\Http\Controllers\Api\Bow\PhysicianController::class
+            [\App\Http\Controllers\Api\Bow\PhysicianController::class, 'store']
         );
-
-    });   
+        Route::put(
+            'bow/physician/{id}',
+            [\App\Http\Controllers\Api\Bow\PhysicianController::class, 'update']
+        )->whereNumber('id');
+        Route::patch(
+            'bow/physician/{id}',
+            [\App\Http\Controllers\Api\Bow\PhysicianController::class, 'update']
+        )->whereNumber('id');
+        Route::delete(
+            'bow/physician/{id}',
+            [\App\Http\Controllers\Api\Bow\PhysicianController::class, 'destroy']
+        )->whereNumber('id');
+    });
     
-    Route::middleware('auth:sanctum')->group(function () {
+    Route::middleware('permission:bow.manage_medicine,bow.add_prescription,bow.monitoring')->get(
+        'bow/medicine',
+        [\App\Http\Controllers\Api\Bow\MedicineController::class, 'index']
+    );
 
-        Route::resource(
+    Route::middleware('permission:bow.manage_medicine')->group(function () {
+        Route::post(
             'bow/medicine',
-            \App\Http\Controllers\Api\Bow\MedicineController::class
+            [\App\Http\Controllers\Api\Bow\MedicineController::class, 'store']
         );
+
+        Route::put(
+            'bow/medicine/{id}',
+            [\App\Http\Controllers\Api\Bow\MedicineController::class, 'update']
+        )->whereNumber('id');
 
         Route::patch(
             'bow/medicine/{id}/status',
             [\App\Http\Controllers\Api\Bow\MedicineController::class, 'toggleStatus']
-        );
-
+        )->whereNumber('id');
     });
 
-    Route::middleware('auth:sanctum')->group(function () {
+    Route::middleware('permission:bow.manage_patients,bow.add_prescription,bow.monitoring')->group(function () {
 
         Route::get(
             'bow/prescription/by-patient/{patient_id}',
             [\App\Http\Controllers\Api\Bow\PrescriptionController::class, 'getByPatient']
-        );
+        )->whereNumber('patient_id');
 
         Route::get(
             'bow/prescription/{prescription_id}',
@@ -302,12 +394,12 @@ Route::patch(
     
 
     
-    Route::middleware('auth:sanctum')->post(
+    Route::middleware('permission:bow.add_prescription')->post(
         'bow/prescription',
         [\App\Http\Controllers\Api\Bow\PrescriptionController::class, 'store']
     );
 
-    Route::middleware('auth:sanctum')->group(function () {
+    Route::middleware('permission:bow.manage_barangay_purok,bow.manage_medicine,bow.manage_patients,bow.manage_physicians,bow.add_prescription,bow.monitoring')->group(function () {
 
         Route::get(
             'bow/dashboard/community-health',
@@ -326,6 +418,8 @@ Route::patch(
 
 
     });
+
+});
 
 
     

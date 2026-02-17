@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\Bow;
 
 use App\Http\Controllers\Controller;
+use App\Support\BowScope;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -38,8 +39,22 @@ class PrescriptionController extends Controller
  * - Latest first
  * ============================================================
  */
-public function getByPatient($patient_id)
+public function getByPatient(Request $request, $patient_id)
 {
+    $patient = DB::table('bow_tbl_patients')
+        ->select('patient_id', 'barangay_id')
+        ->where('patient_id', $patient_id)
+        ->first();
+
+    if (!$patient) {
+        return response()->json([
+            'status' => 'error',
+            'message' => 'Patient not found.'
+        ], 404);
+    }
+
+    BowScope::ensureBarangayAccess($request->user(), (int) $patient->barangay_id);
+
     $history = DB::table('bow_tbl_prescriptions as p')
         ->join(
             'bow_tbl_physicians as ph',
@@ -147,6 +162,20 @@ public function store(Request $request)
             ]);
         }
     }
+
+    $patient = DB::table('bow_tbl_patients')
+        ->select('patient_id', 'barangay_id')
+        ->where('patient_id', $request->patient_id)
+        ->first();
+
+    if (!$patient) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Patient not found.',
+        ], 404);
+    }
+
+    BowScope::ensureBarangayAccess($request->user(), (int) $patient->barangay_id);
 
     return \DB::transaction(function () use ($request) {
 
@@ -275,7 +304,7 @@ public function store(Request $request)
  * - items list with medicine_name, qty, direction, good_for_days
  * ============================================================
  */
-public function show($prescription_id)
+public function show(Request $request, $prescription_id)
 {
     // Header + joins for patient/physician/barangay/purok
     $header = DB::table('bow_tbl_prescriptions as p')
@@ -288,6 +317,7 @@ public function show($prescription_id)
             'p.prescription_id',
             'p.patient_id',
             'p.physician_id',
+            'pt.barangay_id as patient_barangay_id',
             'p.date_released',
 
             'p.blood_pressure',
@@ -328,6 +358,8 @@ public function show($prescription_id)
             'message' => 'Prescription not found.'
         ], 404);
     }
+
+    BowScope::ensureBarangayAccess($request->user(), (int) $header->patient_barangay_id);
 
     // Items
     $items = DB::table('bow_tbl_prescription_items as pi')

@@ -17,6 +17,7 @@ namespace App\Http\Controllers\Api\Bow;
 
 use App\Http\Controllers\Controller;
 use App\Models\BowBarangay;
+use App\Support\BowScope;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 
@@ -25,9 +26,12 @@ class BarangayController extends Controller
     /**
      * Display a listing of barangays.
      */
-    public function index()
+    public function index(Request $request)
     {
-        $data = BowBarangay::orderBy('barangay_name')->get();
+        $query = BowBarangay::query();
+        BowScope::applyBarangayFilter($query, $request->user());
+
+        $data = $query->orderBy('barangay_name')->get();
 
         return response()->json([
             'success' => true,
@@ -40,6 +44,13 @@ class BarangayController extends Controller
      */
     public function store(Request $request)
     {
+        if (BowScope::hasSpecificScope($request->user())) {
+            return response()->json([
+                'success' => false,
+                'message' => 'You cannot create barangays while assigned to SPECIFIC barangays.',
+            ], 403);
+        }
+
         $validated = $request->validate([
             'barangay_name' => 'required|string|max:150|unique:bow_tbl_barangays,barangay_name',
             'status'        => ['required', Rule::in(['ACTIVE', 'INACTIVE'])],
@@ -58,6 +69,8 @@ class BarangayController extends Controller
      */
     public function update(Request $request, $id)
     {
+        BowScope::ensureBarangayAccess($request->user(), (int) $id);
+
         $barangay = BowBarangay::findOrFail($id);
 
         $validated = $request->validate([
@@ -81,8 +94,10 @@ class BarangayController extends Controller
     /**
      * Remove the specified barangay.
      */
-    public function destroy($id)
+    public function destroy(Request $request, $id)
     {
+        BowScope::ensureBarangayAccess($request->user(), (int) $id);
+
         $barangay = BowBarangay::findOrFail($id);
         $barangay->delete();
 

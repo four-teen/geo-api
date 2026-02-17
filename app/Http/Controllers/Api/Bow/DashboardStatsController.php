@@ -15,7 +15,9 @@
 namespace App\Http\Controllers\Api\Bow;
 
 use App\Http\Controllers\Controller;
+use App\Support\BowScope;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 class DashboardStatsController extends Controller
@@ -23,26 +25,27 @@ class DashboardStatsController extends Controller
     /**
      * GET /api/bow/dashboard/community-health
      */
-    public function communityHealthSnapshot(): JsonResponse
+    public function communityHealthSnapshot(Request $request): JsonResponse
     {
+        $basePatientQuery = DB::table('bow_tbl_patients')
+            ->where('status', 'ACTIVE');
+
+        BowScope::applyBarangayFilter($basePatientQuery, $request->user());
+
         return response()->json([
-            'male' => DB::table('bow_tbl_patients')
-                ->where('status', 'ACTIVE')
+            'male' => (clone $basePatientQuery)
                 ->where('sex', 'M')
                 ->count(),
 
-            'female' => DB::table('bow_tbl_patients')
-                ->where('status', 'ACTIVE')
+            'female' => (clone $basePatientQuery)
                 ->where('sex', 'F')
                 ->count(),
 
-            'senior' => DB::table('bow_tbl_patients')
-                ->where('status', 'ACTIVE')
+            'senior' => (clone $basePatientQuery)
                 ->where('is_senior', 1)
                 ->count(),
 
-            'pwd' => DB::table('bow_tbl_patients')
-                ->where('status', 'ACTIVE')
+            'pwd' => (clone $basePatientQuery)
                 ->where('is_pwd', 1)
                 ->count(),
         ]);
@@ -61,15 +64,19 @@ class DashboardStatsController extends Controller
      * - No joins
      * ------------------------------------------------------------------------
      */
-    public function topCardCounts(): JsonResponse
+    public function topCardCounts(Request $request): JsonResponse
     {
-        $barangays = DB::table('bow_tbl_barangays')
-            ->where('status', 'ACTIVE')
-            ->count();
+        $barangaysQuery = DB::table('bow_tbl_barangays')
+            ->where('status', 'ACTIVE');
 
-        $patients = DB::table('bow_tbl_patients')
-            ->where('status', 'ACTIVE')
-            ->count();
+        $patientsQuery = DB::table('bow_tbl_patients')
+            ->where('status', 'ACTIVE');
+
+        BowScope::applyBarangayFilter($barangaysQuery, $request->user(), 'barangay_id');
+        BowScope::applyBarangayFilter($patientsQuery, $request->user(), 'barangay_id');
+
+        $barangays = $barangaysQuery->count();
+        $patients = $patientsQuery->count();
 
         // NOTE: bow_tbl_physicians has NO status column (based on your schema)
         // So we count ALL physicians.
@@ -96,9 +103,9 @@ class DashboardStatsController extends Controller
      * - Includes ACTIVE barangays, with ACTIVE patient counts
      * ------------------------------------------------------------------------
      */
-    public function patientsPerBarangay(): JsonResponse
+    public function patientsPerBarangay(Request $request): JsonResponse
     {
-        $rows = DB::table('bow_tbl_barangays as b')
+        $rowsQuery = DB::table('bow_tbl_barangays as b')
             ->leftJoin('bow_tbl_patients as p', function ($join) {
                 $join->on('p.barangay_id', '=', 'b.barangay_id')
                     ->where('p.status', 'ACTIVE');
@@ -110,8 +117,11 @@ class DashboardStatsController extends Controller
                 'b.barangay_id',
                 'b.barangay_name',
                 DB::raw('COUNT(p.patient_id) as patient_count')
-            )
-            ->get();
+            );
+
+        BowScope::applyBarangayFilter($rowsQuery, $request->user(), 'b.barangay_id');
+
+        $rows = $rowsQuery->get();
 
         return response()->json([
             'data' => $rows,

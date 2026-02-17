@@ -18,6 +18,7 @@ namespace App\Http\Controllers\Api\Bow;
 
 use App\Http\Controllers\Controller;
 use App\Models\BowPurok;
+use App\Support\BowScope;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 
@@ -26,8 +27,10 @@ class PurokController extends Controller
     /**
      * Get puroks by barangay.
      */
-    public function getByBarangay($barangay_id)
+    public function getByBarangay(Request $request, $barangay_id)
     {
+        BowScope::ensureBarangayAccess($request->user(), (int) $barangay_id);
+
         $data = BowPurok::where('barangay_id', $barangay_id)
             ->orderBy('purok_name')
             ->get();
@@ -48,6 +51,8 @@ class PurokController extends Controller
             'purok_name'  => 'required|string|max:150',
             'status'      => ['required', Rule::in(['ACTIVE', 'INACTIVE'])],
         ]);
+
+        BowScope::ensureBarangayAccess($request->user(), (int) $validated['barangay_id']);
 
         // prevent duplicate purok per barangay
         $exists = BowPurok::where('barangay_id', $validated['barangay_id'])
@@ -75,6 +80,7 @@ class PurokController extends Controller
     public function update(Request $request, $id)
     {
         $purok = BowPurok::findOrFail($id);
+        BowScope::ensureBarangayAccess($request->user(), (int) $purok->barangay_id);
 
         $validated = $request->validate([
             'purok_name' => 'required|string|max:150',
@@ -92,9 +98,10 @@ class PurokController extends Controller
     /**
      * Remove the specified purok.
      */
-    public function destroy($id)
+    public function destroy(Request $request, $id)
     {
         $purok = BowPurok::findOrFail($id);
+        BowScope::ensureBarangayAccess($request->user(), (int) $purok->barangay_id);
         $purok->delete();
 
         return response()->json([

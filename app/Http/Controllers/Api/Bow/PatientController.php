@@ -22,6 +22,7 @@ namespace App\Http\Controllers\Api\Bow;
 
 use App\Http\Controllers\Controller;
 use App\Models\BowPatient;
+use App\Support\BowScope;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 use Illuminate\Support\Facades\DB;
@@ -38,6 +39,12 @@ class PatientController extends Controller
     public function index(Request $request)
     {
         $q = BowPatient::query();
+
+        if ($request->filled('barangay_id')) {
+            BowScope::ensureBarangayAccess($request->user(), (int) $request->barangay_id);
+        }
+
+        BowScope::applyBarangayFilter($q, $request->user());
 
         if ($request->filled('barangay_id')) {
             $q->where('barangay_id', $request->barangay_id);
@@ -71,8 +78,10 @@ class PatientController extends Controller
  * - Used by Patients module list
  * ============================================================================
  */
-public function getByBarangay($barangay_id)
+public function getByBarangay(Request $request, $barangay_id)
 {
+    BowScope::ensureBarangayAccess($request->user(), (int) $barangay_id);
+
     $patients = \DB::table('bow_tbl_patients as p')
         ->leftJoin('bow_tbl_puroks as pr', 'p.purok_id', '=', 'pr.purok_id')
         ->select(
@@ -108,7 +117,7 @@ public function getByBarangay($barangay_id)
  * - Used in Add Prescription modal header display
  * ============================================================================
  */
-public function show($id)
+public function show(Request $request, $id)
 {
     $patient = DB::table('bow_tbl_patients')
         ->select(
@@ -138,6 +147,8 @@ public function show($id)
             'message' => 'Patient not found.'
         ], 404);
     }
+
+    BowScope::ensureBarangayAccess($request->user(), (int) $patient->barangay_id);
 
     // Return raw patient object (consistent with getByBarangay style)
     return response()->json($patient);
@@ -171,6 +182,8 @@ public function show($id)
             'status'          => ['required', Rule::in(['ACTIVE', 'INACTIVE'])],
         ]);
 
+        BowScope::ensureBarangayAccess($request->user(), (int) $validated['barangay_id']);
+
         BowPatient::create($validated);
 
         return response()->json([
@@ -185,6 +198,7 @@ public function show($id)
     public function update(Request $request, $id)
     {
         $patient = BowPatient::findOrFail($id);
+        BowScope::ensureBarangayAccess($request->user(), (int) $patient->barangay_id);
 
         /**
          * ============================================================
@@ -232,6 +246,8 @@ public function show($id)
             'status'          => ['required', Rule::in(['ACTIVE', 'INACTIVE'])],
         ]);
 
+        BowScope::ensureBarangayAccess($request->user(), (int) $validated['barangay_id']);
+
         $patient->update($validated);
 
         return response()->json([
@@ -243,9 +259,10 @@ public function show($id)
     /**
      * Delete a patient record.
      */
-    public function destroy($id)
+    public function destroy(Request $request, $id)
     {
         $patient = BowPatient::findOrFail($id);
+        BowScope::ensureBarangayAccess($request->user(), (int) $patient->barangay_id);
         $patient->delete();
 
         return response()->json([
