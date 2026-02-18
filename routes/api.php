@@ -416,6 +416,11 @@ Route::middleware(['auth:sanctum', 'active'])->group(function () {
             [\App\Http\Controllers\Api\Bow\DashboardStatsController::class, 'patientsPerBarangay']
         );
 
+        Route::get(
+            'bow/dashboard/medicine-release-transactions',
+            [\App\Http\Controllers\Api\Bow\DashboardStatsController::class, 'medicineReleaseTransactions']
+        );
+
 
     });
 

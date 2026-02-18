@@ -28,7 +28,8 @@ class BarangayController extends Controller
      */
     public function index(Request $request)
     {
-        $query = BowBarangay::query();
+        $query = BowBarangay::query()
+            ->withCount('puroks');
         BowScope::applyBarangayFilter($query, $request->user());
 
         $data = $query->orderBy('barangay_name')->get();

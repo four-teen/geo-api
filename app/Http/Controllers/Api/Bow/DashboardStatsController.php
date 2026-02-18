@@ -128,6 +128,64 @@ class DashboardStatsController extends Controller
         ]);
     }
 
+    /**
+     * ------------------------------------------------------------------------
+     * GET MEDICINE RELEASE TRANSACTIONS PER MONTH
+     * ------------------------------------------------------------------------
+     * Purpose:
+     * - Midwife dashboard line chart
+     * - Counts medicine release transactions (prescription item rows)
+     * - Current year, grouped by month
+     * ------------------------------------------------------------------------
+     */
+    public function medicineReleaseTransactions(Request $request): JsonResponse
+    {
+        $currentYear = (int) now()->year;
+
+        $rowsQuery = DB::table('bow_tbl_prescriptions as p')
+            ->join('bow_tbl_patients as pt', 'pt.patient_id', '=', 'p.patient_id')
+            ->join('bow_tbl_prescription_items as pi', 'pi.prescription_id', '=', 'p.prescription_id')
+            ->whereYear('p.date_released', $currentYear)
+            ->groupBy(DB::raw('MONTH(p.date_released)'))
+            ->orderBy(DB::raw('MONTH(p.date_released)'))
+            ->selectRaw('MONTH(p.date_released) as month_number')
+            ->selectRaw('COUNT(pi.item_id) as transaction_count');
+
+        BowScope::applyBarangayFilter($rowsQuery, $request->user(), 'pt.barangay_id');
+
+        $rows = $rowsQuery->get()->keyBy(fn ($row) => (int) $row->month_number);
+
+        $monthLabels = [
+            1 => 'JAN',
+            2 => 'FEB',
+            3 => 'MAR',
+            4 => 'APR',
+            5 => 'MAY',
+            6 => 'JUN',
+            7 => 'JUL',
+            8 => 'AUG',
+            9 => 'SEP',
+            10 => 'OCT',
+            11 => 'NOV',
+            12 => 'DEC',
+        ];
+
+        $data = collect(range(1, 12))->map(function ($month) use ($monthLabels, $rows) {
+            $count = isset($rows[$month]) ? (int) $rows[$month]->transaction_count : 0;
+
+            return [
+                'month_number' => $month,
+                'month_label' => $monthLabels[$month],
+                'transaction_count' => $count,
+            ];
+        })->values();
+
+        return response()->json([
+            'year' => $currentYear,
+            'data' => $data,
+        ]);
+    }
+
 
 
 }
