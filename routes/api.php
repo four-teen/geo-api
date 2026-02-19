@@ -6,6 +6,7 @@ use Illuminate\Support\Facades\Route;
 //Admin
 use App\Http\Controllers\Api\Admin\AdminController;
 use App\Http\Controllers\Api\Admin\AccountManagementController;
+use App\Http\Controllers\Api\Admin\AuditLogController;
 use App\Http\Controllers\Api\Admin\Areas\AreasController;
 use App\Http\Controllers\Api\Admin\LivestockCharges\LivestockChargesController;
 use App\Http\Controllers\Api\Admin\SlaughterPrivate\SLPrivate;
@@ -55,6 +56,18 @@ Route::middleware(['auth:sanctum', 'active', 'role:administrator'])
         Route::post('admin/register', 'register');
 });
 
+Route::middleware(['auth:sanctum', 'active'])
+    ->controller(AdminController::class)
+    ->group(function () {
+        Route::patch('admin/account/change-password', 'changePassword');
+    });
+
+Route::middleware(['auth:sanctum'])
+    ->controller(AdminController::class)
+    ->group(function () {
+        Route::post('admin/logout', 'logout');
+    });
+
 Route::middleware(['auth:sanctum', 'active', 'role:administrator'])
     ->controller(AccountManagementController::class)
     ->group(function () {
@@ -65,6 +78,12 @@ Route::middleware(['auth:sanctum', 'active', 'role:administrator'])
         Route::put('admin/accounts/{id}', 'update')->whereNumber('id');
         Route::patch('admin/accounts/{id}', 'update')->whereNumber('id');
         Route::delete('admin/accounts/{id}', 'destroy')->whereNumber('id');
+    });
+
+Route::middleware(['auth:sanctum', 'active', 'role:administrator'])
+    ->controller(AuditLogController::class)
+    ->group(function () {
+        Route::get('admin/audit-logs', 'index');
     });
 
 Route::middleware('auth:sanctum')->group(function () {
@@ -399,6 +418,11 @@ Route::middleware(['auth:sanctum', 'active'])->group(function () {
         [\App\Http\Controllers\Api\Bow\PrescriptionController::class, 'store']
     );
 
+    Route::middleware('permission:bow.manage_medicine')->patch(
+        'bow/prescription/{prescription_id}/release',
+        [\App\Http\Controllers\Api\Bow\PrescriptionController::class, 'release']
+    )->whereNumber('prescription_id');
+
     Route::middleware('permission:bow.manage_barangay_purok,bow.manage_medicine,bow.manage_patients,bow.manage_physicians,bow.add_prescription,bow.monitoring')->group(function () {
 
         Route::get(
@@ -414,6 +438,11 @@ Route::middleware(['auth:sanctum', 'active'])->group(function () {
         Route::get(
             'bow/dashboard/patients-per-barangay',
             [\App\Http\Controllers\Api\Bow\DashboardStatsController::class, 'patientsPerBarangay']
+        );
+
+        Route::get(
+            'bow/dashboard/patient-prescription-trends',
+            [\App\Http\Controllers\Api\Bow\DashboardStatsController::class, 'patientPrescriptionTrends']
         );
 
         Route::get(

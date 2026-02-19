@@ -5,11 +5,10 @@ namespace App\Http\Controllers\Api\Admin;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use App\Http\Controllers\Api\Helpers\BaseController as BaseController;
-use Validator;
 use App\Models\Permission;
 use App\Models\User;
 use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator as FacadesValidator;
 
 class AdminController extends BaseController
@@ -20,9 +19,10 @@ class AdminController extends BaseController
     {
         $validator = FacadesValidator::make($request->all(), [
             'name'=>'required',
-            'email'=>'required',
+            'username'=>'required|unique:users,username',
             'password'=>'required',
             'role' => 'nullable|in:administrator,user',
+            'designation' => 'nullable|string|max:255',
         ]);
 
         if($validator->fails()){
@@ -31,6 +31,10 @@ class AdminController extends BaseController
 
         $input = $request->all();
         $input['password'] = bcrypt($input['password']);
+        $input['username'] = $input['username'] ?? null;
+        $input['email'] = $input['username'];
+        $input['designation'] = $input['designation'] ?? null;
+        $input['must_change_password'] = true;
         $input['role'] = $input['role'] ?? 'user';
         $input['is_active'] = $input['is_active'] ?? true;
         $input['barangay_scope'] = $input['barangay_scope'] ?? 'ALL';
@@ -50,7 +54,8 @@ class AdminController extends BaseController
     public function login(Request $request)
     {
         $validator = FacadesValidator::make($request->all(), [
-            'email' => 'required',
+            'username' => 'nullable|required_without:email|string',
+            'email' => 'nullable|required_without:username|string',
             'password' => 'required',
         ]);
 
@@ -58,7 +63,26 @@ class AdminController extends BaseController
             return $this->sendError('Validation Error.', $validator->errors(), 422);
         }
 
-        if(Auth::guard('web')->attempt(['email' => $request->email, 'password' => $request->password])){
+        $loginIdentifier = $request->username ?: $request->email;
+
+        $credentials = [
+            'username' => $loginIdentifier,
+            'password' => $request->password,
+        ];
+
+        if (!Auth::guard('web')->attempt($credentials)) {
+            // Backward compatibility for rows created before username field.
+            $fallbackCredentials = [
+                'email' => $loginIdentifier,
+                'password' => $request->password,
+            ];
+
+            if (!Auth::guard('web')->attempt($fallbackCredentials)) {
+                return $this->sendError('Unauthorised.', ['error'=>'Unauthorised']);
+            }
+        }
+
+        if(Auth::check()){
             /** @var \App\Models\User $user */
             $user = Auth::user();
 
@@ -78,9 +102,11 @@ class AdminController extends BaseController
             $success['token'] = $this->normalizeAccessToken($user->createToken('MyApp')->plainTextToken);
             $success['name'] =  $user->name;
             $success['id'] =  $user->id;
-            $success['email'] = $user->email;
+            $success['username'] = $user->username ?: $user->email;
+            $success['designation'] = $user->designation;
             $success['role'] = $user->role;
             $success['is_active'] = (bool) $user->is_active;
+            $success['must_change_password'] = (bool) $user->must_change_password;
             $success['barangay_scope'] = $user->barangay_scope;
             $success['permission_codes'] = $permissionCodes;
             $success['barangay_ids'] = $user->barangays->pluck('barangay_id')->values();
@@ -92,9 +118,58 @@ class AdminController extends BaseController
 
             return $this->sendResponse($success, 'User login successfully.');
         }
-        else{
-            return $this->sendError('Unauthorised.', ['error'=>'Unauthorised']);
+        return $this->sendError('Unauthorised.', ['error'=>'Unauthorised']);
+    }
+
+    public function changePassword(Request $request)
+    {
+        $validator = FacadesValidator::make($request->all(), [
+            'current_password' => ['required', 'string'],
+            'password' => ['required', 'string', 'min:6', 'confirmed', 'different:current_password'],
+        ]);
+
+        if ($validator->fails()) {
+            return $this->sendError('Validation Error.', $validator->errors(), 422);
         }
+
+        /** @var \App\Models\User|null $user */
+        $user = $request->user();
+        if (!$user) {
+            return $this->sendError('Unauthorised.', ['error'=>'Unauthorised'], 401);
+        }
+
+        if (!Hash::check($request->current_password, $user->password)) {
+            return $this->sendError(
+                'Current password is incorrect.',
+                ['current_password' => ['Current password is incorrect.']],
+                422
+            );
+        }
+
+        $user->forceFill([
+            'password' => bcrypt($request->password),
+            'must_change_password' => false,
+        ])->save();
+
+        return $this->sendResponse([
+            'must_change_password' => false,
+        ], 'Password changed successfully.');
+    }
+
+    public function logout(Request $request)
+    {
+        /** @var \App\Models\User|null $user */
+        $user = $request->user();
+        if (!$user) {
+            return $this->sendError('Unauthorised.', ['error' => 'Unauthorised'], 401);
+        }
+
+        $currentToken = $user->currentAccessToken();
+        if ($currentToken) {
+            $currentToken->delete();
+        }
+
+        return $this->sendResponse([], 'User logout successfully.');
     }
 
     /**

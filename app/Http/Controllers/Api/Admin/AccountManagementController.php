@@ -84,11 +84,14 @@ class AccountManagementController extends BaseController
         $user = DB::transaction(function () use ($validated) {
             $user = User::create([
                 'name' => $validated['name'],
-                'email' => $validated['email'],
+                'username' => $validated['username'],
+                'designation' => $validated['designation'] ?? null,
+                'email' => $validated['username'],
                 'password' => Hash::make($validated['password']),
                 'role' => $validated['role'],
                 'is_active' => (bool) $validated['is_active'],
                 'barangay_scope' => $validated['barangay_scope'],
+                'must_change_password' => true,
             ]);
 
             $this->syncAssignments($user, $validated);
@@ -115,7 +118,9 @@ class AccountManagementController extends BaseController
         $user = DB::transaction(function () use ($user, $validated) {
             $payload = [
                 'name' => $validated['name'],
-                'email' => $validated['email'],
+                'username' => $validated['username'],
+                'designation' => $validated['designation'] ?? null,
+                'email' => $validated['username'],
                 'role' => $validated['role'],
                 'is_active' => (bool) $validated['is_active'],
                 'barangay_scope' => $validated['barangay_scope'],
@@ -123,6 +128,7 @@ class AccountManagementController extends BaseController
 
             if (!empty($validated['password'])) {
                 $payload['password'] = Hash::make($validated['password']);
+                $payload['must_change_password'] = true;
             }
 
             $user->update($payload);
@@ -183,12 +189,13 @@ class AccountManagementController extends BaseController
 
         $validated = $request->validate([
             'name' => ['required', 'string', 'max:255'],
-            'email' => [
+            'username' => [
                 'required',
                 'string',
                 'max:255',
-                Rule::unique('users', 'email')->ignore($user?->id),
+                Rule::unique('users', 'username')->ignore($user?->id),
             ],
+            'designation' => ['nullable', 'string', 'max:255'],
             'password' => [$isCreate ? 'required' : 'nullable', 'string', 'min:6'],
             'role' => ['required', Rule::in(['administrator', 'user'])],
             'is_active' => ['required', 'boolean'],
@@ -260,9 +267,11 @@ class AccountManagementController extends BaseController
         return [
             'id' => $user->id,
             'name' => $user->name,
-            'email' => $user->email,
+            'username' => $user->username ?: $user->email,
+            'designation' => $user->designation,
             'role' => $user->role,
             'is_active' => (bool) $user->is_active,
+            'must_change_password' => (bool) $user->must_change_password,
             'barangay_scope' => $user->barangay_scope,
             'barangays' => $user->barangays->map(fn ($barangay) => [
                 'barangay_id' => $barangay->barangay_id,

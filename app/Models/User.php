@@ -20,11 +20,14 @@ class User extends Authenticatable
      */
     protected $fillable = [
         'name',
+        'username',
+        'designation',
         'email',
         'password',
         'role',
         'is_active',
         'barangay_scope',
+        'must_change_password',
     ];
 
     /**
@@ -45,6 +48,7 @@ class User extends Authenticatable
     protected $casts = [
         'email_verified_at' => 'datetime',
         'is_active' => 'boolean',
+        'must_change_password' => 'boolean',
     ];
 
     public function permissions(): BelongsToMany

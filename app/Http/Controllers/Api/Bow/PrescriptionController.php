@@ -55,6 +55,13 @@ public function getByPatient(Request $request, $patient_id)
 
     BowScope::ensureBarangayAccess($request->user(), (int) $patient->barangay_id);
 
+    $releaseStatusExpr = "CASE
+        WHEN UPPER(COALESCE(p.release_status, '')) = 'RELEASED'
+            OR p.released_at IS NOT NULL
+        THEN 'RELEASED'
+        ELSE 'PENDING'
+    END";
+
     $history = DB::table('bow_tbl_prescriptions as p')
         ->join(
             'bow_tbl_physicians as ph',
@@ -80,13 +87,15 @@ public function getByPatient(Request $request, $patient_id)
             'p.patient_id',
             'p.physician_id',
             'p.date_released',
+            'p.released_at',
+            'p.release_status',
             'p.remarks',
             'p.created_at',
             'ph.first_name',
             'ph.middle_name',
             'ph.last_name'
         )
-        ->orderBy('p.date_released', 'DESC')
+        ->orderBy(DB::raw('COALESCE(p.released_at, p.date_released, p.created_at)'), 'DESC')
         ->select(
             'p.prescription_id',
             'p.patient_id',
@@ -101,7 +110,8 @@ public function getByPatient(Request $request, $patient_id)
                     ph.last_name
                 ) as physician_name"
             ),
-            'p.date_released',
+            DB::raw('COALESCE(p.released_at, p.date_released, p.created_at) as date_released'),
+            DB::raw("{$releaseStatusExpr} as release_status"),
             'p.remarks',
             'p.created_at',
             DB::raw("
@@ -135,8 +145,9 @@ public function store(Request $request)
 {
     $request->validate([
         'patient_id' => 'required|exists:bow_tbl_patients,patient_id',
-        'physician_id' => 'required|exists:bow_tbl_physicians,physician_id',
-        'remarks' => 'nullable|string',
+        'physician_id' => 'required|integer|exists:bow_tbl_physicians,physician_id',
+        'remarks' => 'required|string',
+        'diagnosis' => 'required|string',
 
         'items' => 'required|array|min:1',
         'items.*.medicine_id' => 'nullable|integer|exists:bow_tbl_medicines,medicine_id',
@@ -149,14 +160,13 @@ public function store(Request $request)
         'body_temperature' => 'nullable|numeric',
         'height_cm' => 'nullable|numeric',
         'weight_kg' => 'nullable|numeric',
-        'diagnosis' => 'nullable|string',
     ]);
 
     foreach ($request->items as $idx => $item) {
-        $medicineId = $item['medicine_id'] ?? null;
+        $medicineId = isset($item['medicine_id']) ? (int) $item['medicine_id'] : null;
         $unavailableName = trim($item['unavailable_medicine_name'] ?? '');
 
-        if (!$medicineId && $unavailableName === '') {
+        if (($medicineId === null || $medicineId <= 0) && $unavailableName === '') {
             throw ValidationException::withMessages([
                 "items.$idx.medicine_id" => "Select medicine or enter unavailable medicine name.",
             ]);
@@ -177,29 +187,31 @@ public function store(Request $request)
 
     BowScope::ensureBarangayAccess($request->user(), (int) $patient->barangay_id);
 
-    return \DB::transaction(function () use ($request) {
+    return DB::transaction(function () use ($request) {
 
         // 1. Create prescription header
         $prescriptionId = $this->nextId('bow_tbl_prescriptions', 'prescription_id');
 
-\DB::table('bow_tbl_prescriptions')->insert([
-    'prescription_id'   => $prescriptionId,
-    'patient_id'       => $request->patient_id,
-    'physician_id'     => $request->physician_id,
+        DB::table('bow_tbl_prescriptions')->insert([
+            'prescription_id' => $prescriptionId,
+            'patient_id' => $request->patient_id,
+            'physician_id' => $request->physician_id,
 
-    'blood_pressure'   => $request->blood_pressure,
-    'heart_rate'       => $request->heart_rate,
-    'body_temperature' => $request->body_temperature,
-    'height_cm'        => $request->height_cm,
-    'weight_kg'        => $request->weight_kg,
+            'blood_pressure' => $request->blood_pressure,
+            'heart_rate' => $request->heart_rate,
+            'body_temperature' => $request->body_temperature,
+            'height_cm' => $request->height_cm,
+            'weight_kg' => $request->weight_kg,
 
-    'diagnosis'        => $request->diagnosis,
-    'remarks'          => $request->remarks,
+            'diagnosis' => $request->diagnosis,
+            'remarks' => $request->remarks,
 
-    'date_released'    => now(),
-    'created_at'       => now(),
-    'updated_at'       => now(),
-]);
+            'date_released' => now(),
+            'release_status' => 'PENDING',
+            'released_at' => null,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
 
 
 
@@ -211,23 +223,7 @@ public function store(Request $request)
             $unavailableName = trim($item['unavailable_medicine_name'] ?? '');
 
             if ($medicineId) {
-                $medicine = \DB::table('bow_tbl_medicines')
-                    ->where('medicine_id', $medicineId)
-                    ->lockForUpdate()
-                    ->first();
-
-                if (!$medicine) {
-                    throw new \Exception('Medicine not found.');
-                }
-
-                if ($medicine->quantity < $item['qty']) {
-                    throw new \Exception(
-                        "Insufficient stock for {$medicine->medicine_name}"
-                    );
-                }
-
-                // Insert prescription item (inventory medicine)
-                \DB::table('bow_tbl_prescription_items')->insert([
+                DB::table('bow_tbl_prescription_items')->insert([
                     'item_id' => $nextItemId++,
                     'prescription_id' => $prescriptionId,
                     'medicine_id' => $medicineId,
@@ -236,17 +232,9 @@ public function store(Request $request)
                     'good_for_days' => $item['good_for_days'],
                     'created_at' => now(),
                 ]);
-
-                // Deduct inventory
-                \DB::table('bow_tbl_medicines')
-                    ->where('medicine_id', $medicineId)
-                    ->update([
-                        'quantity' => $medicine->quantity - $item['qty'],
-                        'updated_at' => now(),
-                    ]);
             } else {
                 // Resolve / create medicine master record (inactive) for unavailable entry
-                $manualMedicine = \DB::table('bow_tbl_medicines')->whereRaw(
+                $manualMedicine = DB::table('bow_tbl_medicines')->whereRaw(
                     'LOWER(medicine_name) = ?',
                     [mb_strtolower($unavailableName)]
                 )->first();
@@ -254,7 +242,7 @@ public function store(Request $request)
                 if (!$manualMedicine) {
                     $manualMedicineId = $this->nextId('bow_tbl_medicines', 'medicine_id');
 
-                    \DB::table('bow_tbl_medicines')->insert([
+                    DB::table('bow_tbl_medicines')->insert([
                         'medicine_id' => $manualMedicineId,
                         'medicine_name' => $unavailableName,
                         'quantity' => 0,
@@ -270,7 +258,7 @@ public function store(Request $request)
                 }
 
                 // Insert prescription item using resolved medicine_id
-                \DB::table('bow_tbl_prescription_items')->insert([
+                DB::table('bow_tbl_prescription_items')->insert([
                     'item_id' => $nextItemId++,
                     'prescription_id' => $prescriptionId,
                     'medicine_id' => $manualMedicine->medicine_id,
@@ -286,7 +274,7 @@ public function store(Request $request)
             'success' => true,
             'message' => 'Prescription saved successfully.',
         ]);
-    });
+    }, 3);
 }
 
 
@@ -319,6 +307,13 @@ public function show(Request $request, $prescription_id)
             'p.physician_id',
             'pt.barangay_id as patient_barangay_id',
             'p.date_released',
+            'p.released_at',
+            DB::raw("CASE
+                WHEN UPPER(COALESCE(p.release_status, '')) = 'RELEASED'
+                    OR p.released_at IS NOT NULL
+                THEN 'RELEASED'
+                ELSE 'PENDING'
+            END as release_status"),
 
             'p.blood_pressure',
             'p.heart_rate',
@@ -385,13 +380,130 @@ public function show(Request $request, $prescription_id)
     ]);
 }
 
+/**
+ * ============================================================
+ * RELEASE PRESCRIPTION (DEDUCT INVENTORY ON RELEASE)
+ * ------------------------------------------------------------
+ * Route : PATCH bow/prescription/{prescription_id}/release
+ * ============================================================
+ */
+public function release(Request $request, $prescription_id)
+{
+    return DB::transaction(function () use ($request, $prescription_id) {
+        $prescription = DB::table('bow_tbl_prescriptions as p')
+            ->join('bow_tbl_patients as pt', 'pt.patient_id', '=', 'p.patient_id')
+            ->where('p.prescription_id', $prescription_id)
+            ->select(
+                'p.prescription_id',
+                'p.release_status',
+                'p.released_at',
+                'pt.barangay_id'
+            )
+            ->lockForUpdate()
+            ->first();
+
+        if (!$prescription) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Prescription not found.',
+            ], 404);
+        }
+
+        BowScope::ensureBarangayAccess($request->user(), (int) $prescription->barangay_id);
+
+        $alreadyReleased = strtoupper((string) ($prescription->release_status ?? '')) === 'RELEASED'
+            || !empty($prescription->released_at);
+
+        if ($alreadyReleased) {
+            // Normalize mismatched legacy rows (released_at exists but release_status is not RELEASED)
+            if (strtoupper((string) ($prescription->release_status ?? '')) !== 'RELEASED') {
+                DB::table('bow_tbl_prescriptions')
+                    ->where('prescription_id', $prescription_id)
+                    ->update([
+                        'release_status' => 'RELEASED',
+                        'updated_at' => now(),
+                    ]);
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Prescription already released. No stock was deducted.',
+                'already_released' => true,
+                'stock_deducted' => false,
+            ]);
+        }
+
+        $items = DB::table('bow_tbl_prescription_items')
+            ->where('prescription_id', $prescription_id)
+            ->get();
+
+        if ($items->isEmpty()) {
+            throw ValidationException::withMessages([
+                'items' => 'Prescription has no medicine items to release.',
+            ]);
+        }
+
+        foreach ($items as $index => $item) {
+            $medicine = DB::table('bow_tbl_medicines')
+                ->where('medicine_id', $item->medicine_id)
+                ->lockForUpdate()
+                ->first();
+
+            if (!$medicine) {
+                $position = $index + 1;
+                throw ValidationException::withMessages([
+                    "items.$index.medicine_id" => "Medicine for item #{$position} was not found.",
+                ]);
+            }
+
+            if (strtolower((string) $medicine->status) !== 'active') {
+                continue;
+            }
+
+            if ((float) $medicine->quantity < (float) $item->qty) {
+                throw ValidationException::withMessages([
+                    "items.$index.qty" => "Insufficient stock for {$medicine->medicine_name}.",
+                ]);
+            }
+
+            DB::table('bow_tbl_medicines')
+                ->where('medicine_id', $medicine->medicine_id)
+                ->update([
+                    'quantity' => (float) $medicine->quantity - (float) $item->qty,
+                    'updated_at' => now(),
+                ]);
+        }
+
+        $now = now();
+
+        DB::table('bow_tbl_prescriptions')
+            ->where('prescription_id', $prescription_id)
+            ->update([
+                'release_status' => 'RELEASED',
+                'released_at' => $now,
+                'date_released' => $now,
+                'updated_at' => $now,
+            ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Prescription released successfully.',
+            'already_released' => false,
+            'stock_deducted' => true,
+        ]);
+    });
+}
+
 
 /**
  * Generate next integer PK for legacy tables without AUTO_INCREMENT.
  */
 private function nextId(string $table, string $idColumn): int
 {
-    $maxId = \DB::table($table)->max($idColumn);
+    $maxId = DB::table($table)
+        ->selectRaw("COALESCE(MAX({$idColumn}), 0) as max_id")
+        ->lockForUpdate()
+        ->value('max_id');
 
     return ((int) $maxId) + 1;
 }

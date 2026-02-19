@@ -96,6 +96,9 @@ public function getByBarangay(Request $request, $barangay_id)
             'p.contact_number',
             'p.is_pwd',
             'p.is_senior',
+            'p.is_hpn',
+            'p.is_dm',
+            'p.is_ekonsulta_member',
             'p.status',
             'p.purok_id',
             'pr.purok_name'
@@ -131,6 +134,9 @@ public function show(Request $request, $id)
             'spouse_name',
             'is_pwd',
             'is_senior',
+            'is_hpn',
+            'is_dm',
+            'is_ekonsulta_member',
             'contact_number',
             'barangay_id',
             'purok_id',
@@ -174,6 +180,9 @@ public function show(Request $request, $id)
 
             'is_pwd'          => 'required|boolean',
             'is_senior'       => 'nullable|boolean',
+            'is_hpn'          => 'nullable|boolean',
+            'is_dm'           => 'nullable|boolean',
+            'is_ekonsulta_member' => 'nullable|boolean',
             'contact_number'  => 'nullable|string|max:30',
 
             'barangay_id'     => 'required|exists:bow_tbl_barangays,barangay_id',
@@ -184,7 +193,16 @@ public function show(Request $request, $id)
 
         BowScope::ensureBarangayAccess($request->user(), (int) $validated['barangay_id']);
 
-        BowPatient::create($validated);
+        DB::transaction(function () use ($validated) {
+            // Legacy tables may not have AUTO_INCREMENT configured correctly.
+            // Reserve the next ID inside a transaction with row-level lock.
+            $nextPatientId = $this->nextLegacyId('bow_tbl_patients', 'patient_id');
+
+            $patient = new BowPatient();
+            $patient->fill($validated);
+            $patient->patient_id = $nextPatientId;
+            $patient->save();
+        }, 3);
 
         return response()->json([
             'success' => true,
@@ -209,7 +227,10 @@ public function show(Request $request, $id)
          * - Used by Patients list "Set Active / Set Inactive" button
          * ============================================================
          */
-        if ($request->has('status') && $request->keys() === ['status']) {
+        if (
+            $request->has('status')
+            && collect($request->keys())->diff(['status'])->isEmpty()
+        ) {
             $request->validate([
                 'status' => ['required', Rule::in(['ACTIVE', 'INACTIVE'])],
             ]);
@@ -238,6 +259,9 @@ public function show(Request $request, $id)
 
             'is_pwd'          => 'required|boolean',
             'is_senior'       => 'nullable|boolean',
+            'is_hpn'          => 'nullable|boolean',
+            'is_dm'           => 'nullable|boolean',
+            'is_ekonsulta_member' => 'nullable|boolean',
             'contact_number'  => 'nullable|string|max:30',
 
             'barangay_id'     => 'required|exists:bow_tbl_barangays,barangay_id',
@@ -269,5 +293,18 @@ public function show(Request $request, $id)
             'success' => true,
             'message' => 'Patient deleted successfully.',
         ]);
+    }
+
+    /**
+     * Generate the next legacy integer ID using row lock to prevent duplicates.
+     */
+    private function nextLegacyId(string $table, string $idColumn): int
+    {
+        $maxId = DB::table($table)
+            ->selectRaw("COALESCE(MAX({$idColumn}), 0) as max_id")
+            ->lockForUpdate()
+            ->value('max_id');
+
+        return ((int) $maxId) + 1;
     }
 }

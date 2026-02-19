@@ -48,6 +48,18 @@ class DashboardStatsController extends Controller
             'pwd' => (clone $basePatientQuery)
                 ->where('is_pwd', 1)
                 ->count(),
+
+            'hpn' => (clone $basePatientQuery)
+                ->where('is_hpn', 1)
+                ->count(),
+
+            'dm' => (clone $basePatientQuery)
+                ->where('is_dm', 1)
+                ->count(),
+
+            'ekonsulta_member' => (clone $basePatientQuery)
+                ->where('is_ekonsulta_member', 1)
+                ->count(),
         ]);
     }
 
@@ -130,6 +142,91 @@ class DashboardStatsController extends Controller
 
     /**
      * ------------------------------------------------------------------------
+     * GET MONTHLY PATIENT VS PRESCRIPTION TRENDS
+     * ------------------------------------------------------------------------
+     * Purpose:
+     * - Dashboard line chart dataset
+     * - Monthly active patient registrations vs released prescriptions
+     * - Current year only
+     * ------------------------------------------------------------------------
+     */
+    public function patientPrescriptionTrends(Request $request): JsonResponse
+    {
+        $currentYear = (int) now()->year;
+
+        $patientsRowsQuery = DB::table('bow_tbl_patients as pt')
+            ->where('pt.status', 'ACTIVE')
+            ->whereYear('pt.created_at', $currentYear)
+            ->groupBy(DB::raw('MONTH(pt.created_at)'))
+            ->orderBy(DB::raw('MONTH(pt.created_at)'))
+            ->selectRaw('MONTH(pt.created_at) as month_number')
+            ->selectRaw('COUNT(pt.patient_id) as patient_count')
+            ->selectRaw("SUM(CASE WHEN pt.sex = 'M' THEN 1 ELSE 0 END) as male_patient_count")
+            ->selectRaw("SUM(CASE WHEN pt.sex = 'F' THEN 1 ELSE 0 END) as female_patient_count");
+
+        BowScope::applyBarangayFilter($patientsRowsQuery, $request->user(), 'pt.barangay_id');
+
+        $patientsRows = $patientsRowsQuery
+            ->get()
+            ->keyBy(fn ($row) => (int) $row->month_number);
+
+        $prescriptionsRowsQuery = DB::table('bow_tbl_prescriptions as p')
+            ->join('bow_tbl_patients as pt', 'pt.patient_id', '=', 'p.patient_id')
+            ->where(function ($query) {
+                $query->whereRaw("UPPER(COALESCE(p.release_status, '')) = 'RELEASED'")
+                    ->orWhereNotNull('p.released_at');
+            })
+            ->whereRaw('YEAR(COALESCE(p.released_at, p.date_released, p.created_at)) = ?', [$currentYear])
+            ->groupBy(DB::raw('MONTH(COALESCE(p.released_at, p.date_released, p.created_at))'))
+            ->orderBy(DB::raw('MONTH(COALESCE(p.released_at, p.date_released, p.created_at))'))
+            ->selectRaw('MONTH(COALESCE(p.released_at, p.date_released, p.created_at)) as month_number')
+            ->selectRaw('COUNT(p.prescription_id) as released_prescription_count');
+
+        BowScope::applyBarangayFilter($prescriptionsRowsQuery, $request->user(), 'pt.barangay_id');
+
+        $prescriptionsRows = $prescriptionsRowsQuery
+            ->get()
+            ->keyBy(fn ($row) => (int) $row->month_number);
+
+        $monthLabels = [
+            1 => 'JAN',
+            2 => 'FEB',
+            3 => 'MAR',
+            4 => 'APR',
+            5 => 'MAY',
+            6 => 'JUN',
+            7 => 'JUL',
+            8 => 'AUG',
+            9 => 'SEP',
+            10 => 'OCT',
+            11 => 'NOV',
+            12 => 'DEC',
+        ];
+
+        $data = collect(range(1, 12))->map(function ($month) use ($monthLabels, $patientsRows, $prescriptionsRows) {
+            $patientCount = isset($patientsRows[$month]) ? (int) $patientsRows[$month]->patient_count : 0;
+            $malePatientCount = isset($patientsRows[$month]) ? (int) $patientsRows[$month]->male_patient_count : 0;
+            $femalePatientCount = isset($patientsRows[$month]) ? (int) $patientsRows[$month]->female_patient_count : 0;
+            $releasedPrescriptionCount = isset($prescriptionsRows[$month]) ? (int) $prescriptionsRows[$month]->released_prescription_count : 0;
+
+            return [
+                'month_number' => $month,
+                'month_label' => $monthLabels[$month],
+                'patient_count' => $patientCount,
+                'male_patient_count' => $malePatientCount,
+                'female_patient_count' => $femalePatientCount,
+                'released_prescription_count' => $releasedPrescriptionCount,
+            ];
+        })->values();
+
+        return response()->json([
+            'year' => $currentYear,
+            'data' => $data,
+        ]);
+    }
+
+    /**
+     * ------------------------------------------------------------------------
      * GET MEDICINE RELEASE TRANSACTIONS PER MONTH
      * ------------------------------------------------------------------------
      * Purpose:
@@ -145,6 +242,7 @@ class DashboardStatsController extends Controller
         $rowsQuery = DB::table('bow_tbl_prescriptions as p')
             ->join('bow_tbl_patients as pt', 'pt.patient_id', '=', 'p.patient_id')
             ->join('bow_tbl_prescription_items as pi', 'pi.prescription_id', '=', 'p.prescription_id')
+            ->where('p.release_status', 'RELEASED')
             ->whereYear('p.date_released', $currentYear)
             ->groupBy(DB::raw('MONTH(p.date_released)'))
             ->orderBy(DB::raw('MONTH(p.date_released)'))
