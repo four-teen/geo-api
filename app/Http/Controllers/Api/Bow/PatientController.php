@@ -101,7 +101,8 @@ public function getByBarangay(Request $request, $barangay_id)
             'p.is_ekonsulta_member',
             'p.status',
             'p.purok_id',
-            'pr.purok_name'
+            'pr.purok_name',
+            DB::raw('EXISTS(SELECT 1 FROM bow_tbl_prescriptions px WHERE px.patient_id = p.patient_id) as has_prescriptions')
         )
         ->where('p.barangay_id', $barangay_id)
         ->orderBy('p.last_name')
