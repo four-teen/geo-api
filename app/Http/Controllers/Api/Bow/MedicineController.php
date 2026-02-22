@@ -70,6 +70,19 @@ class MedicineController extends Controller
     }
 
     /* ===============================================================
+       DELETE MEDICINE
+       =============================================================== */
+    public function destroy($id)
+    {
+        $medicine = BowMedicine::findOrFail($id);
+        $medicine->delete();
+
+        return response()->json([
+            'message' => 'Medicine deleted successfully.',
+        ], 200);
+    }
+
+    /* ===============================================================
        TOGGLE STATUS
        =============================================================== */
     public function toggleStatus($id)

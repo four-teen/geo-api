@@ -395,6 +395,11 @@ Route::middleware(['auth:sanctum', 'active'])->group(function () {
             'bow/medicine/{id}/status',
             [\App\Http\Controllers\Api\Bow\MedicineController::class, 'toggleStatus']
         )->whereNumber('id');
+
+        Route::middleware('role:administrator')->delete(
+            'bow/medicine/{id}',
+            [\App\Http\Controllers\Api\Bow\MedicineController::class, 'destroy']
+        )->whereNumber('id');
     });
 
     Route::middleware('permission:bow.manage_patients,bow.add_prescription,bow.monitoring')->group(function () {
