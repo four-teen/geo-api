@@ -428,6 +428,11 @@ Route::middleware(['auth:sanctum', 'active'])->group(function () {
         [\App\Http\Controllers\Api\Bow\PrescriptionController::class, 'release']
     )->whereNumber('prescription_id');
 
+    Route::middleware('role:administrator')->delete(
+        'bow/prescription/{prescription_id}',
+        [\App\Http\Controllers\Api\Bow\PrescriptionController::class, 'destroy']
+    )->whereNumber('prescription_id');
+
     Route::middleware('permission:bow.manage_barangay_purok,bow.manage_medicine,bow.manage_patients,bow.manage_physicians,bow.add_prescription,bow.monitoring')->group(function () {
 
         Route::get(

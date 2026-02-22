@@ -124,6 +124,18 @@ public function getByPatient(Request $request, $patient_id)
         )
         ->get();
 
+    $user = $request->user();
+    $isAdministrator = $user
+        && method_exists($user, 'isAdministrator')
+        && $user->isAdministrator();
+
+    $history = $history->map(function ($row) use ($isAdministrator) {
+        $row->can_delete = $isAdministrator
+            && strtoupper((string) ($row->release_status ?? '')) === 'PENDING';
+
+        return $row;
+    });
+
     return response()->json([
         'status' => 'success',
         'data'   => $history
@@ -378,6 +390,62 @@ public function show(Request $request, $prescription_id)
             'items'  => $items,
         ]
     ]);
+}
+
+/**
+ * ============================================================
+ * DELETE PRESCRIPTION (ADMIN ONLY, PENDING ONLY)
+ * ------------------------------------------------------------
+ * Route : DELETE bow/prescription/{prescription_id}
+ * ============================================================
+ */
+public function destroy(Request $request, $prescription_id)
+{
+    return DB::transaction(function () use ($request, $prescription_id) {
+        $prescription = DB::table('bow_tbl_prescriptions as p')
+            ->join('bow_tbl_patients as pt', 'pt.patient_id', '=', 'p.patient_id')
+            ->where('p.prescription_id', $prescription_id)
+            ->select(
+                'p.prescription_id',
+                'p.release_status',
+                'p.released_at',
+                'pt.barangay_id'
+            )
+            ->lockForUpdate()
+            ->first();
+
+        if (!$prescription) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Prescription not found.',
+            ], 404);
+        }
+
+        BowScope::ensureBarangayAccess($request->user(), (int) $prescription->barangay_id);
+
+        $alreadyReleased = strtoupper((string) ($prescription->release_status ?? '')) === 'RELEASED'
+            || !empty($prescription->released_at);
+
+        if ($alreadyReleased) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Released prescriptions cannot be deleted.',
+            ], 422);
+        }
+
+        DB::table('bow_tbl_prescription_items')
+            ->where('prescription_id', $prescription_id)
+            ->delete();
+
+        DB::table('bow_tbl_prescriptions')
+            ->where('prescription_id', $prescription_id)
+            ->delete();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Prescription deleted successfully.',
+        ]);
+    });
 }
 
 /**
