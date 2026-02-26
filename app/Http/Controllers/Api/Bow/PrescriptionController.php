@@ -158,8 +158,8 @@ public function store(Request $request)
     $request->validate([
         'patient_id' => 'required|exists:bow_tbl_patients,patient_id',
         'physician_id' => 'required|integer|exists:bow_tbl_physicians,physician_id',
-        'remarks' => 'required|string',
-        'diagnosis' => 'required|string',
+        'remarks' => 'nullable|string',
+        'diagnosis' => 'nullable|string',
 
         'items' => 'required|array|min:1',
         'items.*.medicine_id' => 'nullable|integer|exists:bow_tbl_medicines,medicine_id',
