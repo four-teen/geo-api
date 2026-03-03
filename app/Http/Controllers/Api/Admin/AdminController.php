@@ -21,7 +21,7 @@ class AdminController extends BaseController
             'name'=>'required',
             'username'=>'required|unique:users,username',
             'password'=>'required',
-            'role' => 'nullable|in:administrator,user',
+            'role' => 'nullable|in:administrator,staff',
             'designation' => 'nullable|string|max:255',
         ]);
 
@@ -35,7 +35,7 @@ class AdminController extends BaseController
         $input['email'] = $input['username'];
         $input['designation'] = $input['designation'] ?? null;
         $input['must_change_password'] = true;
-        $input['role'] = $input['role'] ?? 'user';
+        $input['role'] = $input['role'] ?? 'staff';
         $input['is_active'] = $input['is_active'] ?? true;
         $input['barangay_scope'] = $input['barangay_scope'] ?? 'ALL';
         $user = User::create($input);

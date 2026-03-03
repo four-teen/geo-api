@@ -30,4 +30,9 @@ class BowPurok extends Model
     {
         return $this->belongsTo(BowBarangay::class, 'barangay_id', 'barangay_id');
     }
+
+    public function precincts()
+    {
+        return $this->hasMany(BowPrecinct::class, 'purok_id', 'purok_id');
+    }
 }

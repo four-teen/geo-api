@@ -17,12 +17,8 @@ use Illuminate\Validation\ValidationException;
 class AccountManagementController extends BaseController
 {
     private const DEFAULT_PERMISSIONS = [
-        ['code' => 'bow.manage_barangay_purok', 'label' => 'Manage Barangays & Puroks'],
-        ['code' => 'bow.manage_medicine', 'label' => 'Manage Medicines'],
-        ['code' => 'bow.manage_patients', 'label' => 'Manage Patients'],
-        ['code' => 'bow.manage_physicians', 'label' => 'Manage Physicians'],
-        ['code' => 'bow.add_prescription', 'label' => 'Add Prescriptions'],
-        ['code' => 'bow.monitoring', 'label' => 'Monitoring (Read Only)'],
+        ['code' => 'bow.manage_geo', 'label' => 'Manage Barangay, Purok, and Precinct'],
+        ['code' => 'bow.view_geo', 'label' => 'View Barangay, Purok, and Precinct'],
     ];
 
     public function options(): JsonResponse
@@ -197,7 +193,7 @@ class AccountManagementController extends BaseController
             ],
             'designation' => ['nullable', 'string', 'max:255'],
             'password' => [$isCreate ? 'required' : 'nullable', 'string', 'min:6'],
-            'role' => ['required', Rule::in(['administrator', 'user'])],
+            'role' => ['required', Rule::in(['administrator', 'staff'])],
             'is_active' => ['required', 'boolean'],
             'barangay_scope' => ['nullable', Rule::in(['ALL', 'SPECIFIC'])],
             'barangay_ids' => ['nullable', 'array'],
@@ -219,18 +215,8 @@ class AccountManagementController extends BaseController
 
         if (count($validated['permission_codes']) === 0) {
             throw ValidationException::withMessages([
-                'permission_codes' => ['Select at least one transaction permission for user role.'],
+                'permission_codes' => ['Select at least one transaction permission for staff role.'],
             ]);
-        }
-
-        if (
-            count($validated['permission_codes']) === 1 &&
-            $validated['permission_codes'][0] === 'bow.monitoring'
-        ) {
-            $validated['barangay_scope'] = 'ALL';
-            $validated['barangay_ids'] = [];
-
-            return $validated;
         }
 
         if ($validated['barangay_scope'] === 'SPECIFIC') {

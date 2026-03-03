@@ -18,12 +18,8 @@ return new class extends Migration
         }
 
         $defaultPermissions = [
-            ['code' => 'bow.manage_barangay_purok', 'label' => 'Manage Barangays & Puroks'],
-            ['code' => 'bow.manage_medicine', 'label' => 'Manage Medicines'],
-            ['code' => 'bow.manage_patients', 'label' => 'Manage Patients'],
-            ['code' => 'bow.manage_physicians', 'label' => 'Manage Physicians'],
-            ['code' => 'bow.add_prescription', 'label' => 'Add Prescriptions'],
-            ['code' => 'bow.monitoring', 'label' => 'Monitoring (Read Only)'],
+            ['code' => 'bow.manage_geo', 'label' => 'Manage Barangay, Purok, and Precinct'],
+            ['code' => 'bow.view_geo', 'label' => 'View Barangay, Purok, and Precinct'],
         ];
 
         DB::table('permissions')->upsert($defaultPermissions, ['code'], ['label']);
@@ -34,12 +30,8 @@ return new class extends Migration
         if (Schema::hasTable('permissions')) {
             DB::table('permissions')
                 ->whereIn('code', [
-                    'bow.manage_barangay_purok',
-                    'bow.manage_medicine',
-                    'bow.manage_patients',
-                    'bow.manage_physicians',
-                    'bow.add_prescription',
-                    'bow.monitoring',
+                    'bow.manage_geo',
+                    'bow.view_geo',
                 ])
                 ->delete();
         }
