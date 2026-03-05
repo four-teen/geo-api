@@ -62,6 +62,7 @@ class Kernel extends HttpKernel
         'can' => \Illuminate\Auth\Middleware\Authorize::class,
         'guest' => \App\Http\Middleware\RedirectIfAuthenticated::class,
         'permission' => \App\Http\Middleware\EnsureUserPermission::class,
+        'can_delete' => \App\Http\Middleware\EnsureDeletePermission::class,
         'password.confirm' => \Illuminate\Auth\Middleware\RequirePassword::class,
         'role' => \App\Http\Middleware\EnsureUserRole::class,
         'signed' => \Illuminate\Routing\Middleware\ValidateSignature::class,

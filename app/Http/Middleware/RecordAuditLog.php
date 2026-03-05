@@ -38,8 +38,8 @@ class RecordAuditLog
     ];
 
     private const RESOURCE_KEYS = [
-        'accounts' => ['username', 'name', 'designation', 'role', 'is_active', 'barangay_scope'],
-        'account' => ['username', 'name', 'designation', 'role', 'is_active', 'barangay_scope'],
+        'accounts' => ['username', 'name', 'designation', 'role', 'is_active', 'can_delete', 'barangay_scope'],
+        'account' => ['username', 'name', 'designation', 'role', 'is_active', 'can_delete', 'barangay_scope'],
         'barangay' => ['barangay_name', 'status'],
         'purok' => ['purok_name', 'barangay_id', 'status'],
         'patient' => [

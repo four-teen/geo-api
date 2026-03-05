@@ -18,8 +18,8 @@ return new class extends Migration
         }
 
         $defaultPermissions = [
-            ['code' => 'bow.manage_geo', 'label' => 'Manage Barangay, Purok, and Precinct'],
-            ['code' => 'bow.view_geo', 'label' => 'View Barangay, Purok, and Precinct'],
+            ['code' => 'bow.manage_geo', 'label' => 'Manage Barangay, Purok, Precinct, and Voters'],
+            ['code' => 'bow.view_geo', 'label' => 'View Barangay, Purok, Precinct, and Voters'],
         ];
 
         DB::table('permissions')->upsert($defaultPermissions, ['code'], ['label']);

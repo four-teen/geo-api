@@ -23,6 +23,7 @@ class AdminController extends BaseController
             'password'=>'required',
             'role' => 'nullable|in:administrator,staff',
             'designation' => 'nullable|string|max:255',
+            'can_delete' => 'nullable|boolean',
         ]);
 
         if($validator->fails()){
@@ -37,6 +38,9 @@ class AdminController extends BaseController
         $input['must_change_password'] = true;
         $input['role'] = $input['role'] ?? 'staff';
         $input['is_active'] = $input['is_active'] ?? true;
+        $input['can_delete'] = ($input['role'] ?? 'staff') === 'administrator'
+            ? true
+            : (bool) ($input['can_delete'] ?? false);
         $input['barangay_scope'] = $input['barangay_scope'] ?? 'ALL';
         $user = User::create($input);
         $success['token'] = $this->normalizeAccessToken($user->createToken('MyApp')->plainTextToken);
@@ -44,6 +48,7 @@ class AdminController extends BaseController
         $success['id'] = $user->id;
         $success['role'] = $user->role;
         $success['is_active'] = (bool) $user->is_active;
+        $success['can_delete'] = $user->isAdministrator() ? true : (bool) $user->can_delete;
         $success['barangay_scope'] = $user->barangay_scope;
         $success['permission_codes'] = [];
         $success['barangay_ids'] = [];
@@ -106,6 +111,7 @@ class AdminController extends BaseController
             $success['designation'] = $user->designation;
             $success['role'] = $user->role;
             $success['is_active'] = (bool) $user->is_active;
+            $success['can_delete'] = $user->isAdministrator() ? true : (bool) $user->can_delete;
             $success['must_change_password'] = (bool) $user->must_change_password;
             $success['barangay_scope'] = $user->barangay_scope;
             $success['permission_codes'] = $permissionCodes;

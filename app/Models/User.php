@@ -26,6 +26,7 @@ class User extends Authenticatable
         'password',
         'role',
         'is_active',
+        'can_delete',
         'barangay_scope',
         'must_change_password',
     ];
@@ -48,6 +49,7 @@ class User extends Authenticatable
     protected $casts = [
         'email_verified_at' => 'datetime',
         'is_active' => 'boolean',
+        'can_delete' => 'boolean',
         'must_change_password' => 'boolean',
     ];
 

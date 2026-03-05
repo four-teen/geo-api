@@ -17,8 +17,8 @@ use Illuminate\Validation\ValidationException;
 class AccountManagementController extends BaseController
 {
     private const DEFAULT_PERMISSIONS = [
-        ['code' => 'bow.manage_geo', 'label' => 'Manage Barangay, Purok, and Precinct'],
-        ['code' => 'bow.view_geo', 'label' => 'View Barangay, Purok, and Precinct'],
+        ['code' => 'bow.manage_geo', 'label' => 'Manage Barangay, Purok, Precinct, and Voters'],
+        ['code' => 'bow.view_geo', 'label' => 'View Barangay, Purok, Precinct, and Voters'],
     ];
 
     public function options(): JsonResponse
@@ -86,6 +86,7 @@ class AccountManagementController extends BaseController
                 'password' => Hash::make($validated['password']),
                 'role' => $validated['role'],
                 'is_active' => (bool) $validated['is_active'],
+                'can_delete' => (bool) $validated['can_delete'],
                 'barangay_scope' => $validated['barangay_scope'],
                 'must_change_password' => true,
             ]);
@@ -119,6 +120,7 @@ class AccountManagementController extends BaseController
                 'email' => $validated['username'],
                 'role' => $validated['role'],
                 'is_active' => (bool) $validated['is_active'],
+                'can_delete' => (bool) $validated['can_delete'],
                 'barangay_scope' => $validated['barangay_scope'],
             ];
 
@@ -195,6 +197,7 @@ class AccountManagementController extends BaseController
             'password' => [$isCreate ? 'required' : 'nullable', 'string', 'min:6'],
             'role' => ['required', Rule::in(['administrator', 'staff'])],
             'is_active' => ['required', 'boolean'],
+            'can_delete' => ['nullable', 'boolean'],
             'barangay_scope' => ['nullable', Rule::in(['ALL', 'SPECIFIC'])],
             'barangay_ids' => ['nullable', 'array'],
             'barangay_ids.*' => ['integer', 'exists:bow_tbl_barangays,barangay_id'],
@@ -205,11 +208,13 @@ class AccountManagementController extends BaseController
         if ($validated['role'] === 'administrator') {
             $validated['barangay_scope'] = 'ALL';
             $validated['barangay_ids'] = [];
+            $validated['can_delete'] = true;
             $validated['permission_codes'] = Permission::query()->pluck('code')->all();
 
             return $validated;
         }
 
+        $validated['can_delete'] = (bool) ($validated['can_delete'] ?? false);
         $validated['barangay_scope'] = $validated['barangay_scope'] ?? 'ALL';
         $validated['permission_codes'] = array_values(array_unique($validated['permission_codes'] ?? []));
 
@@ -257,6 +262,7 @@ class AccountManagementController extends BaseController
             'designation' => $user->designation,
             'role' => $user->role,
             'is_active' => (bool) $user->is_active,
+            'can_delete' => $user->isAdministrator() ? true : (bool) $user->can_delete,
             'must_change_password' => (bool) $user->must_change_password,
             'barangay_scope' => $user->barangay_scope,
             'barangays' => $user->barangays->map(fn ($barangay) => [
