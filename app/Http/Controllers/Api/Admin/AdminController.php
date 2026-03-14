@@ -21,7 +21,7 @@ class AdminController extends BaseController
             'name'=>'required',
             'username'=>'required|unique:users,username',
             'password'=>'required',
-            'role' => 'nullable|in:administrator,staff',
+            'role' => 'nullable|in:administrator,staff,municipal_staff,viewer',
             'designation' => 'nullable|string|max:255',
             'can_delete' => 'nullable|boolean',
         ]);

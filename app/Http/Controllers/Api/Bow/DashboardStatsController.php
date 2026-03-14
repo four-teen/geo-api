@@ -22,6 +22,74 @@ use Illuminate\Support\Facades\DB;
 
 class DashboardStatsController extends Controller
 {
+    public function voterInsights(Request $request): JsonResponse
+    {
+        $baseQuery = DB::table('bow_tbl_recipients as r');
+        BowScope::applyBarangayFilter($baseQuery, $request->user(), 'r.barangay');
+
+        $totalVoters = (clone $baseQuery)->count();
+        $assignedBarangay = (clone $baseQuery)->whereNotNull('r.barangay')->count();
+        $assignedPurok = (clone $baseQuery)->whereNotNull('r.purok')->count();
+
+        $occupationTotals = $this->buildOccupationTotals(clone $baseQuery);
+        $occupationTagged = array_sum($occupationTotals);
+        arsort($occupationTotals);
+
+        $topProfessions = collect($occupationTotals)
+            ->map(fn (int $total, string $label) => [
+                'label' => $label,
+                'total' => $total,
+                'share' => $totalVoters > 0 ? round(($total / $totalVoters) * 100, 1) : 0.0,
+            ])
+            ->values();
+
+        $leadingProfession = $topProfessions->first();
+
+        $ageRows = $this->buildAgeEvaluationRows(clone $baseQuery);
+        $topBarangays = $this->buildTopBarangays(clone $baseQuery, $totalVoters);
+
+        return response()->json([
+            'success' => true,
+            'snapshot' => [
+                'total_voters' => $totalVoters,
+                'occupation_tagged' => $occupationTagged,
+                'occupation_coverage' => $totalVoters > 0 ? round(($occupationTagged / $totalVoters) * 100, 1) : 0.0,
+                'unique_professions' => count($occupationTotals),
+                'assigned_barangay' => $assignedBarangay,
+                'assigned_purok' => $assignedPurok,
+                'leading_profession' => $leadingProfession ?? [
+                    'label' => 'No profession data',
+                    'total' => 0,
+                    'share' => 0.0,
+                ],
+            ],
+            'profession_snapshot' => $topProfessions->take(4)->values(),
+            'top_professions' => $topProfessions->take(8)->values(),
+            'top_barangays' => $topBarangays,
+            'evaluation_chart' => [
+                'categories' => $ageRows->pluck('age_group')->values(),
+                'series' => [
+                    [
+                        'name' => 'All Voters',
+                        'data' => $ageRows->pluck('voters')->map(fn ($value) => (int) $value)->values(),
+                    ],
+                    [
+                        'name' => 'Occupation Tagged',
+                        'data' => $ageRows->pluck('occupation_tagged')->map(fn ($value) => (int) $value)->values(),
+                    ],
+                    [
+                        'name' => 'Barangay Tagged',
+                        'data' => $ageRows->pluck('assigned_barangay')->map(fn ($value) => (int) $value)->values(),
+                    ],
+                    [
+                        'name' => 'Purok Tagged',
+                        'data' => $ageRows->pluck('assigned_purok')->map(fn ($value) => (int) $value)->values(),
+                    ],
+                ],
+            ],
+        ]);
+    }
+
     /**
      * GET /api/bow/dashboard/community-health
      */
@@ -284,6 +352,134 @@ class DashboardStatsController extends Controller
         ]);
     }
 
+    private function buildOccupationTotals($baseQuery): array
+    {
+        $rows = $baseQuery
+            ->selectRaw("UPPER(TRIM(r.occupation)) as raw_occupation")
+            ->selectRaw('COUNT(*) as total')
+            ->whereNotNull('r.occupation')
+            ->whereRaw("TRIM(r.occupation) <> ''")
+            ->groupBy(DB::raw("UPPER(TRIM(r.occupation))"))
+            ->get();
+
+        $totals = [];
+        foreach ($rows as $row) {
+            $label = $this->normalizeOccupationLabel((string) $row->raw_occupation);
+            if ($label === null) {
+                continue;
+            }
+
+            $totals[$label] = ($totals[$label] ?? 0) + (int) $row->total;
+        }
+
+        return $totals;
+    }
+
+    private function buildAgeEvaluationRows($baseQuery)
+    {
+        $rows = $baseQuery
+            ->selectRaw($this->ageGroupCaseSql() . ' as age_group')
+            ->selectRaw('COUNT(*) as voters')
+            ->selectRaw("SUM(CASE WHEN {$this->validOccupationSql()} THEN 1 ELSE 0 END) as occupation_tagged")
+            ->selectRaw("SUM(CASE WHEN r.barangay IS NOT NULL THEN 1 ELSE 0 END) as assigned_barangay")
+            ->selectRaw("SUM(CASE WHEN r.purok IS NOT NULL THEN 1 ELSE 0 END) as assigned_purok")
+            ->groupBy('age_group')
+            ->orderByRaw($this->ageGroupSortSql())
+            ->get()
+            ->keyBy('age_group');
+
+        return collect([
+            'Under 18',
+            '18-29',
+            '30-44',
+            '45-59',
+            '60+',
+            'Unknown',
+        ])->map(function (string $ageGroup) use ($rows) {
+            $row = $rows->get($ageGroup);
+
+            return [
+                'age_group' => $ageGroup,
+                'voters' => $row ? (int) $row->voters : 0,
+                'occupation_tagged' => $row ? (int) $row->occupation_tagged : 0,
+                'assigned_barangay' => $row ? (int) $row->assigned_barangay : 0,
+                'assigned_purok' => $row ? (int) $row->assigned_purok : 0,
+            ];
+        })->values();
+    }
+
+    private function buildTopBarangays($baseQuery, int $totalVoters)
+    {
+        return $baseQuery
+            ->leftJoin('bow_tbl_barangays as b', 'b.barangay_id', '=', 'r.barangay')
+            ->selectRaw("COALESCE(b.barangay_name, 'UN ASSIGNED') as barangay_label")
+            ->selectRaw('COUNT(*) as total')
+            ->groupBy('barangay_label')
+            ->orderByDesc('total')
+            ->limit(6)
+            ->get()
+            ->map(fn ($row) => [
+                'label' => (string) $row->barangay_label,
+                'total' => (int) $row->total,
+                'share' => $totalVoters > 0 ? round(((int) $row->total / $totalVoters) * 100, 1) : 0.0,
+            ])
+            ->values();
+    }
+
+    private function normalizeOccupationLabel(string $value): ?string
+    {
+        $normalized = strtoupper(trim($value));
+        if ($normalized === '') {
+            return null;
+        }
+
+        $normalized = str_replace(['.', ',', '/', '-', '_'], ' ', $normalized);
+        $normalized = preg_replace('/\s+/', ' ', $normalized) ?? $normalized;
+        $normalized = trim($normalized);
+
+        if (in_array($normalized, ['\\N', '-', 'NONE', 'N A', 'NA', 'NULL', 'UNKNOWN'], true)) {
+            return null;
+        }
+
+        $aliases = [
+            'HOUSE WIFE' => 'HOUSEWIFE',
+            'HOUSE KEEPING' => 'HOUSEKEEPING',
+            'TRI CYCLE DRIVER' => 'TRICYCLE DRIVER',
+        ];
+
+        return $aliases[$normalized] ?? $normalized;
+    }
+
+    private function validOccupationSql(): string
+    {
+        return "r.occupation IS NOT NULL
+            AND TRIM(r.occupation) <> ''
+            AND UPPER(TRIM(r.occupation)) NOT IN ('\\\\N', '-', 'NONE', 'N/A', 'NA', 'NULL', 'UNKNOWN')";
+    }
+
+    private function ageGroupCaseSql(): string
+    {
+        return "CASE
+            WHEN r.birthdate IS NULL THEN 'Unknown'
+            WHEN TIMESTAMPDIFF(YEAR, r.birthdate, CURDATE()) < 18 THEN 'Under 18'
+            WHEN TIMESTAMPDIFF(YEAR, r.birthdate, CURDATE()) BETWEEN 18 AND 29 THEN '18-29'
+            WHEN TIMESTAMPDIFF(YEAR, r.birthdate, CURDATE()) BETWEEN 30 AND 44 THEN '30-44'
+            WHEN TIMESTAMPDIFF(YEAR, r.birthdate, CURDATE()) BETWEEN 45 AND 59 THEN '45-59'
+            ELSE '60+'
+        END";
+    }
+
+    private function ageGroupSortSql(): string
+    {
+        return "CASE age_group
+            WHEN 'Under 18' THEN 1
+            WHEN '18-29' THEN 2
+            WHEN '30-44' THEN 3
+            WHEN '45-59' THEN 4
+            WHEN '60+' THEN 5
+            ELSE 6
+        END";
+    }
 
 
 }

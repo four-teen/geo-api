@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Model;
 
 class BowRecipient extends Model
@@ -33,5 +34,17 @@ class BowRecipient extends Model
 
     protected $casts = [
         'birthdate' => 'date:Y-m-d',
+        'barangay' => 'integer',
+        'purok' => 'integer',
     ];
+
+    public function barangayRecord(): BelongsTo
+    {
+        return $this->belongsTo(BowBarangay::class, 'barangay', 'barangay_id');
+    }
+
+    public function purokRecord(): BelongsTo
+    {
+        return $this->belongsTo(BowPurok::class, 'purok', 'purok_id');
+    }
 }

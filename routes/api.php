@@ -3,6 +3,7 @@
 use App\Http\Controllers\Api\Admin\AdminController;
 use App\Http\Controllers\Api\Admin\AccountManagementController;
 use App\Http\Controllers\Api\Bow\BarangayController;
+use App\Http\Controllers\Api\Bow\DashboardStatsController;
 use App\Http\Controllers\Api\Bow\PrecinctController;
 use App\Http\Controllers\Api\Bow\PurokController;
 use App\Http\Controllers\Api\Bow\RecipientController;
@@ -32,6 +33,7 @@ Route::middleware(['auth:sanctum', 'active', 'role:administrator'])->group(funct
 
 Route::middleware(['auth:sanctum', 'active'])->group(function () {
     Route::middleware('permission:bow.manage_geo,bow.view_geo')->group(function () {
+        Route::get('bow/dashboard/voter-insights', [DashboardStatsController::class, 'voterInsights']);
         Route::get('bow/barangay', [BarangayController::class, 'index']);
         Route::get('bow/purok/by-barangay/{barangay_id}', [PurokController::class, 'getByBarangay'])
             ->whereNumber('barangay_id');
