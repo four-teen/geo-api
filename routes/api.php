@@ -7,6 +7,8 @@ use App\Http\Controllers\Api\Bow\DashboardStatsController;
 use App\Http\Controllers\Api\Bow\PrecinctController;
 use App\Http\Controllers\Api\Bow\PurokController;
 use App\Http\Controllers\Api\Bow\RecipientController;
+use App\Http\Controllers\Api\Bow\ReligionController;
+use App\Http\Controllers\Api\Bow\TribeController;
 use Illuminate\Support\Facades\Route;
 
 Route::controller(AdminController::class)->group(function () {
@@ -39,6 +41,8 @@ Route::middleware(['auth:sanctum', 'active'])->group(function () {
             ->whereNumber('barangay_id');
         Route::get('bow/precinct/by-purok/{purok_id}', [PrecinctController::class, 'getByPurok'])
             ->whereNumber('purok_id');
+        Route::get('bow/religions', [ReligionController::class, 'index']);
+        Route::get('bow/tribes', [TribeController::class, 'index']);
         Route::get('bow/recipients', [RecipientController::class, 'index']);
         Route::get('bow/voters', [RecipientController::class, 'index']);
     });
@@ -56,6 +60,14 @@ Route::middleware(['auth:sanctum', 'active'])->group(function () {
         Route::put('bow/precinct/{id}', [PrecinctController::class, 'update'])->whereNumber('id');
         Route::patch('bow/precinct/{id}', [PrecinctController::class, 'update'])->whereNumber('id');
 
+        Route::post('bow/tribes', [TribeController::class, 'store']);
+        Route::put('bow/tribes/{id}', [TribeController::class, 'update'])->whereNumber('id');
+        Route::patch('bow/tribes/{id}', [TribeController::class, 'update'])->whereNumber('id');
+
+        Route::post('bow/religions', [ReligionController::class, 'store']);
+        Route::put('bow/religions/{id}', [ReligionController::class, 'update'])->whereNumber('id');
+        Route::patch('bow/religions/{id}', [ReligionController::class, 'update'])->whereNumber('id');
+
         Route::post('bow/recipients', [RecipientController::class, 'store']);
         Route::put('bow/recipients/{id}', [RecipientController::class, 'update'])->whereNumber('id');
         Route::patch('bow/recipients/{id}', [RecipientController::class, 'update'])->whereNumber('id');
@@ -69,6 +81,8 @@ Route::middleware(['auth:sanctum', 'active'])->group(function () {
         Route::delete('bow/barangay/{id}', [BarangayController::class, 'destroy'])->whereNumber('id');
         Route::delete('bow/purok/{id}', [PurokController::class, 'destroy'])->whereNumber('id');
         Route::delete('bow/precinct/{id}', [PrecinctController::class, 'destroy'])->whereNumber('id');
+        Route::delete('bow/religions/{id}', [ReligionController::class, 'destroy'])->whereNumber('id');
+        Route::delete('bow/tribes/{id}', [TribeController::class, 'destroy'])->whereNumber('id');
         Route::delete('bow/recipients/{id}', [RecipientController::class, 'destroy'])->whereNumber('id');
         Route::delete('bow/voters/{id}', [RecipientController::class, 'destroy'])->whereNumber('id');
     });
