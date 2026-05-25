@@ -70,10 +70,12 @@ class RecipientController extends Controller
                     ->orWhere('bow_tbl_recipients.last_name', 'like', "%{$keyword}%")
                     ->orWhere('bow_tbl_recipients.voters_id_number', 'like', "%{$keyword}%")
                     ->orWhere('bow_tbl_recipients.precinct_no', 'like', "%{$keyword}%")
+                    ->orWhere('bow_tbl_recipients.religion', 'like', "%{$keyword}%")
                     ->orWhere('bow_tbl_recipients.barangay', 'like', "%{$keyword}%")
                     ->orWhere('bow_tbl_recipients.purok', 'like', "%{$keyword}%")
                     ->orWhere('recipient_barangay_lookup.barangay_name', 'like', "%{$keyword}%")
-                    ->orWhere('recipient_purok_lookup.purok_name', 'like', "%{$keyword}%");
+                    ->orWhere('recipient_purok_lookup.purok_name', 'like', "%{$keyword}%")
+                    ->orWhere('recipient_tribe_lookup.tribe_name', 'like', "%{$keyword}%");
 
                 if (Str::contains(Str::lower($keyword), ['un assigned', 'unassigned'])) {
                     $inner->orWhere(function (Builder $unassigned) {
@@ -176,6 +178,7 @@ class RecipientController extends Controller
             'marital_status' => ['nullable', 'string', 'max:50'],
             'phone_number' => ['nullable', 'string', 'max:50'],
             'religion' => ['nullable', 'string', 'max:100'],
+            'tribe_id' => ['nullable', 'integer', 'min:1', 'exists:bow_tbl_tribes,tribe_id'],
             'sex' => ['nullable', 'string', 'max:20'],
             'profile_picture' => ['nullable', 'image', 'max:3072'],
             'status' => ['nullable', 'string', 'max:50'],
@@ -197,6 +200,7 @@ class RecipientController extends Controller
             'marital_status' => $validated['marital_status'] ?? null,
             'phone_number' => $validated['phone_number'] ?? null,
             'religion' => $validated['religion'] ?? null,
+            'tribe_id' => $this->normalizeLocationId($validated['tribe_id'] ?? null),
             'sex' => $validated['sex'] ?? null,
             'status' => $this->normalizeVoterStatus($validated['status'] ?? 'ACTIVE'),
             'profile_picture' => null,
@@ -217,7 +221,7 @@ class RecipientController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Voter created successfully.',
-            'data' => $this->serializeRecipient($recipient->loadMissing(['barangayRecord', 'purokRecord'])),
+            'data' => $this->serializeRecipient($recipient->loadMissing(['barangayRecord', 'purokRecord', 'tribeRecord'])),
         ], 201);
     }
 
@@ -240,6 +244,7 @@ class RecipientController extends Controller
             'marital_status' => ['nullable', 'string', 'max:50'],
             'phone_number' => ['nullable', 'string', 'max:50'],
             'religion' => ['nullable', 'string', 'max:100'],
+            'tribe_id' => ['nullable', 'integer', 'min:1', 'exists:bow_tbl_tribes,tribe_id'],
             'sex' => ['nullable', 'string', 'max:20'],
             'profile_picture' => ['nullable', 'image', 'max:3072'],
             'remove_profile_picture' => ['nullable', 'boolean'],
@@ -262,6 +267,7 @@ class RecipientController extends Controller
             'marital_status' => $validated['marital_status'] ?? null,
             'phone_number' => $validated['phone_number'] ?? null,
             'religion' => $validated['religion'] ?? null,
+            'tribe_id' => $this->normalizeLocationId($validated['tribe_id'] ?? null),
             'sex' => $validated['sex'] ?? null,
             'status' => $this->normalizeVoterStatus($validated['status'] ?? (string) $recipient->status),
         ];
@@ -286,7 +292,7 @@ class RecipientController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Voter updated successfully.',
-            'data' => $this->serializeRecipient($recipient->fresh(['barangayRecord', 'purokRecord'])),
+            'data' => $this->serializeRecipient($recipient->fresh(['barangayRecord', 'purokRecord', 'tribeRecord'])),
         ]);
     }
 
@@ -350,7 +356,9 @@ class RecipientController extends Controller
             $attributes['linked_barangay_id'],
             $attributes['linked_barangay_name'],
             $attributes['linked_purok_id'],
-            $attributes['linked_purok_name']
+            $attributes['linked_purok_name'],
+            $attributes['linked_tribe_id'],
+            $attributes['linked_tribe_name']
         );
 
         $barangayId = $this->normalizeLocationId(
@@ -399,6 +407,18 @@ class RecipientController extends Controller
             ? 'Un Assigned'
             : ($purokName !== '' ? $purokName : 'Unknown Purok');
 
+        $tribeId = $this->normalizeLocationId(
+            $recipient->getAttribute('linked_tribe_id')
+                ?? $recipient->tribeRecord?->tribe_id
+                ?? $recipient->tribe_id
+        );
+
+        $tribeName = trim((string) (
+            $recipient->getAttribute('linked_tribe_name')
+                ?? $recipient->tribeRecord?->tribe_name
+                ?? ''
+        ));
+
         return array_merge($attributes, [
             'barangay' => $barangayLabel,
             'barangay_id' => $barangayId ?? 0,
@@ -406,6 +426,9 @@ class RecipientController extends Controller
             'purok' => $purokLabel,
             'purok_id' => $purokId ?? 0,
             'purok_name' => $purokName !== '' ? $purokName : null,
+            'tribe' => $tribeName !== '' ? $tribeName : null,
+            'tribe_id' => $tribeId,
+            'tribe_name' => $tribeName !== '' ? $tribeName : null,
             'is_unassigned' => $barangayId === null,
             'full_name' => $fullName,
             'profile_picture_url' => $this->resolveProfilePictureUrl($recipient->profile_picture),
@@ -472,12 +495,15 @@ class RecipientController extends Controller
         return BowRecipient::query()
             ->leftJoin('bow_tbl_barangays as recipient_barangay_lookup', 'recipient_barangay_lookup.barangay_id', '=', 'bow_tbl_recipients.barangay')
             ->leftJoin('bow_tbl_puroks as recipient_purok_lookup', 'recipient_purok_lookup.purok_id', '=', 'bow_tbl_recipients.purok')
+            ->leftJoin('bow_tbl_tribes as recipient_tribe_lookup', 'recipient_tribe_lookup.tribe_id', '=', 'bow_tbl_recipients.tribe_id')
             ->select([
                 'bow_tbl_recipients.*',
                 'recipient_barangay_lookup.barangay_id as linked_barangay_id',
                 'recipient_barangay_lookup.barangay_name as linked_barangay_name',
                 'recipient_purok_lookup.purok_id as linked_purok_id',
                 'recipient_purok_lookup.purok_name as linked_purok_name',
+                'recipient_tribe_lookup.tribe_id as linked_tribe_id',
+                'recipient_tribe_lookup.tribe_name as linked_tribe_name',
             ]);
     }
 

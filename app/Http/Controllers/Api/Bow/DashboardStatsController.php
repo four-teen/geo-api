@@ -47,6 +47,8 @@ class DashboardStatsController extends Controller
 
         $ageRows = $this->buildAgeEvaluationRows(clone $baseQuery);
         $topBarangays = $this->buildTopBarangays(clone $baseQuery, $totalVoters);
+        $topReligions = $this->buildTopReligions(clone $baseQuery, $totalVoters);
+        $topTribes = $this->buildTopTribes(clone $baseQuery, $totalVoters);
 
         return response()->json([
             'success' => true,
@@ -66,6 +68,8 @@ class DashboardStatsController extends Controller
             'profession_snapshot' => $topProfessions->take(4)->values(),
             'top_professions' => $topProfessions->take(8)->values(),
             'top_barangays' => $topBarangays,
+            'top_religions' => $topReligions,
+            'top_tribes' => $topTribes,
             'evaluation_chart' => [
                 'categories' => $ageRows->pluck('age_group')->values(),
                 'series' => [
@@ -420,6 +424,44 @@ class DashboardStatsController extends Controller
             ->get()
             ->map(fn ($row) => [
                 'label' => (string) $row->barangay_label,
+                'total' => (int) $row->total,
+                'share' => $totalVoters > 0 ? round(((int) $row->total / $totalVoters) * 100, 1) : 0.0,
+            ])
+            ->values();
+    }
+
+    private function buildTopReligions($baseQuery, int $totalVoters)
+    {
+        return $baseQuery
+            ->selectRaw("CASE
+                WHEN r.religion IS NULL OR TRIM(r.religion) = '' THEN 'Not Specified'
+                ELSE TRIM(r.religion)
+            END as religion_label")
+            ->selectRaw('COUNT(*) as total')
+            ->groupBy('religion_label')
+            ->orderByDesc('total')
+            ->limit(6)
+            ->get()
+            ->map(fn ($row) => [
+                'label' => (string) $row->religion_label,
+                'total' => (int) $row->total,
+                'share' => $totalVoters > 0 ? round(((int) $row->total / $totalVoters) * 100, 1) : 0.0,
+            ])
+            ->values();
+    }
+
+    private function buildTopTribes($baseQuery, int $totalVoters)
+    {
+        return $baseQuery
+            ->leftJoin('bow_tbl_tribes as t', 't.tribe_id', '=', 'r.tribe_id')
+            ->selectRaw("COALESCE(t.tribe_name, 'Not Specified') as tribe_label")
+            ->selectRaw('COUNT(*) as total')
+            ->groupBy('tribe_label')
+            ->orderByDesc('total')
+            ->limit(6)
+            ->get()
+            ->map(fn ($row) => [
+                'label' => (string) $row->tribe_label,
                 'total' => (int) $row->total,
                 'share' => $totalVoters > 0 ? round(((int) $row->total / $totalVoters) * 100, 1) : 0.0,
             ])

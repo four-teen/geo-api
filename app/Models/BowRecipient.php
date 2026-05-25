@@ -27,6 +27,7 @@ class BowRecipient extends Model
         'marital_status',
         'phone_number',
         'religion',
+        'tribe_id',
         'sex',
         'profile_picture',
         'status',
@@ -36,6 +37,7 @@ class BowRecipient extends Model
         'birthdate' => 'date:Y-m-d',
         'barangay' => 'integer',
         'purok' => 'integer',
+        'tribe_id' => 'integer',
     ];
 
     public function barangayRecord(): BelongsTo
@@ -46,5 +48,10 @@ class BowRecipient extends Model
     public function purokRecord(): BelongsTo
     {
         return $this->belongsTo(BowPurok::class, 'purok', 'purok_id');
+    }
+
+    public function tribeRecord(): BelongsTo
+    {
+        return $this->belongsTo(BowTribe::class, 'tribe_id', 'tribe_id');
     }
 }
