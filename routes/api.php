@@ -9,6 +9,7 @@ use App\Http\Controllers\Api\Bow\PurokController;
 use App\Http\Controllers\Api\Bow\RecipientController;
 use App\Http\Controllers\Api\Bow\ReligionController;
 use App\Http\Controllers\Api\Bow\TribeController;
+use App\Http\Controllers\Api\Bow\VoterImportController;
 use Illuminate\Support\Facades\Route;
 
 Route::controller(AdminController::class)->group(function () {
@@ -48,6 +49,16 @@ Route::middleware(['auth:sanctum', 'active'])->group(function () {
     });
 
     Route::middleware('permission:bow.manage_geo')->group(function () {
+        Route::get('bow/voter-imports', [VoterImportController::class, 'index']);
+        Route::post('bow/voter-imports/preview', [VoterImportController::class, 'preview']);
+        Route::get('bow/voter-imports/commit-progress/{token}', [VoterImportController::class, 'progress']);
+        Route::get('bow/voter-imports/{id}', [VoterImportController::class, 'show'])->whereNumber('id');
+        Route::get('bow/voter-imports/{id}/rows', [VoterImportController::class, 'rows'])->whereNumber('id');
+        Route::post('bow/voter-imports/{id}/auto-resolve', [VoterImportController::class, 'autoResolve'])->whereNumber('id');
+        Route::put('bow/voter-imports/{id}/mappings', [VoterImportController::class, 'mappings'])->whereNumber('id');
+        Route::post('bow/voter-imports/{id}/commit', [VoterImportController::class, 'commit'])->whereNumber('id');
+        Route::delete('bow/voter-imports/{id}', [VoterImportController::class, 'destroy'])->whereNumber('id');
+
         Route::post('bow/barangay', [BarangayController::class, 'store']);
         Route::put('bow/barangay/{id}', [BarangayController::class, 'update'])->whereNumber('id');
         Route::patch('bow/barangay/{id}', [BarangayController::class, 'update'])->whereNumber('id');

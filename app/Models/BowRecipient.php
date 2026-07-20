@@ -15,11 +15,17 @@ class BowRecipient extends Model
 
     protected $fillable = [
         'precinct_no',
+        'precinct_id',
         'voters_id_number',
         'first_name',
         'middle_name',
         'last_name',
         'extension',
+        'source_full_name',
+        'source_address',
+        'source_record_no',
+        'import_id',
+        'row_fingerprint',
         'birthdate',
         'occupation',
         'barangay',
@@ -38,6 +44,9 @@ class BowRecipient extends Model
         'barangay' => 'integer',
         'purok' => 'integer',
         'tribe_id' => 'integer',
+        'precinct_id' => 'integer',
+        'source_record_no' => 'integer',
+        'import_id' => 'integer',
     ];
 
     public function barangayRecord(): BelongsTo
@@ -53,5 +62,15 @@ class BowRecipient extends Model
     public function tribeRecord(): BelongsTo
     {
         return $this->belongsTo(BowTribe::class, 'tribe_id', 'tribe_id');
+    }
+
+    public function precinctRecord(): BelongsTo
+    {
+        return $this->belongsTo(BowPrecinct::class, 'precinct_id', 'precinct_id');
+    }
+
+    public function voterImport(): BelongsTo
+    {
+        return $this->belongsTo(BowVoterImport::class, 'import_id', 'import_id');
     }
 }
