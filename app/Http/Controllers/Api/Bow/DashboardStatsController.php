@@ -27,12 +27,19 @@ class DashboardStatsController extends Controller
         $baseQuery = DB::table('bow_tbl_recipients as r');
         BowScope::applyBarangayFilter($baseQuery, $request->user(), 'r.barangay');
 
-        $totalVoters = (clone $baseQuery)->count();
-        $assignedBarangay = (clone $baseQuery)->whereNotNull('r.barangay')->count();
-        $assignedPurok = (clone $baseQuery)->whereNotNull('r.purok')->count();
+        $snapshotRow = (clone $baseQuery)
+            ->selectRaw('COUNT(*) as total_voters')
+            ->selectRaw('SUM(CASE WHEN r.barangay IS NOT NULL THEN 1 ELSE 0 END) as assigned_barangay')
+            ->selectRaw('SUM(CASE WHEN r.purok IS NOT NULL THEN 1 ELSE 0 END) as assigned_purok')
+            ->selectRaw("SUM(CASE WHEN {$this->validOccupationSql()} THEN 1 ELSE 0 END) as occupation_tagged")
+            ->first();
+
+        $totalVoters = (int) ($snapshotRow->total_voters ?? 0);
+        $assignedBarangay = (int) ($snapshotRow->assigned_barangay ?? 0);
+        $assignedPurok = (int) ($snapshotRow->assigned_purok ?? 0);
+        $occupationTagged = (int) ($snapshotRow->occupation_tagged ?? 0);
 
         $occupationTotals = $this->buildOccupationTotals(clone $baseQuery);
-        $occupationTagged = array_sum($occupationTotals);
         arsort($occupationTotals);
 
         $topProfessions = collect($occupationTotals)
@@ -47,8 +54,16 @@ class DashboardStatsController extends Controller
 
         $ageRows = $this->buildAgeEvaluationRows(clone $baseQuery);
         $topBarangays = $this->buildTopBarangays(clone $baseQuery, $totalVoters);
-        $topReligions = $this->buildTopReligions(clone $baseQuery, $totalVoters);
-        $topTribes = $this->buildTopTribes(clone $baseQuery, $totalVoters);
+        $purokDistribution = $this->buildPurokDistribution(clone $baseQuery);
+        $topReligions = collect();
+        $topTribes = collect();
+
+        // The administrator dashboard does not display these two breakdowns.
+        // Staff dashboards retain the full response by omitting compact=1.
+        if (!$request->boolean('compact')) {
+            $topReligions = $this->buildTopReligions(clone $baseQuery, $totalVoters);
+            $topTribes = $this->buildTopTribes(clone $baseQuery, $totalVoters);
+        }
 
         return response()->json([
             'success' => true,
@@ -68,6 +83,12 @@ class DashboardStatsController extends Controller
             'profession_snapshot' => $topProfessions->take(4)->values(),
             'top_professions' => $topProfessions->take(8)->values(),
             'top_barangays' => $topBarangays,
+            'purok_distribution' => $purokDistribution,
+            'purok_summary' => [
+                'unique_puroks' => $purokDistribution->count(),
+                'existing_puroks' => $purokDistribution->where('is_import_created', false)->count(),
+                'import_created_puroks' => $purokDistribution->where('is_import_created', true)->count(),
+            ],
             'top_religions' => $topReligions,
             'top_tribes' => $topTribes,
             'evaluation_chart' => [
@@ -427,6 +448,49 @@ class DashboardStatsController extends Controller
                 'total' => (int) $row->total,
                 'share' => $totalVoters > 0 ? round(((int) $row->total / $totalVoters) * 100, 1) : 0.0,
             ])
+            ->values();
+    }
+
+    private function buildPurokDistribution($baseQuery)
+    {
+        return $baseQuery
+            ->join('bow_tbl_puroks as p', 'p.purok_id', '=', 'r.purok')
+            ->leftJoin('bow_tbl_barangays as b', 'b.barangay_id', '=', 'p.barangay_id')
+            ->whereNotNull('r.purok')
+            ->select([
+                'p.purok_id',
+                'p.purok_name',
+                'p.created_from_import_id',
+                'b.barangay_name',
+            ])
+            ->selectRaw('COUNT(r.recipient_id) as total')
+            ->groupBy(
+                'p.purok_id',
+                'p.purok_name',
+                'p.created_from_import_id',
+                'b.barangay_name'
+            )
+            ->orderByDesc('total')
+            ->orderBy('b.barangay_name')
+            ->orderBy('p.purok_name')
+            ->get()
+            ->map(function ($row) {
+                $barangayName = trim((string) ($row->barangay_name ?: 'UNASSIGNED BARANGAY'));
+                $purokName = trim((string) $row->purok_name);
+                $createdFromImportId = $row->created_from_import_id
+                    ? (int) $row->created_from_import_id
+                    : null;
+
+                return [
+                    'purok_id' => (int) $row->purok_id,
+                    'purok_name' => $purokName,
+                    'barangay_name' => $barangayName,
+                    'label' => $barangayName . ' - ' . $purokName,
+                    'total' => (int) $row->total,
+                    'is_import_created' => $createdFromImportId !== null,
+                    'created_from_import_id' => $createdFromImportId,
+                ];
+            })
             ->values();
     }
 

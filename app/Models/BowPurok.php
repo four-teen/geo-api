@@ -24,6 +24,7 @@ class BowPurok extends Model
         'barangay_id',
         'purok_name',
         'status',
+        'created_from_import_id',
     ];
 
     public function barangay()
