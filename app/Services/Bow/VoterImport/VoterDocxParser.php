@@ -13,6 +13,8 @@ use ZipArchive;
 class VoterDocxParser
 {
     private const WORD_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+    private const MAX_SOURCE_NUMBER_WITHOUT_DECLARED_TOTAL = 100000;
+    private const MAX_REPORTED_MISSING_SOURCE_NUMBERS = 1000;
 
     public function parse(string $path): array
     {
@@ -33,11 +35,18 @@ class VoterDocxParser
             $diagnostics = [
                 'duplicate_source_numbers' => [],
                 'missing_source_numbers' => [],
+                'missing_source_number_count' => 0,
+                'missing_source_numbers_truncated' => false,
                 'continuation_rows' => 0,
                 'recovered_outside_table' => 0,
+                'merged_table_rows' => 0,
+                'recovered_merged_records' => 0,
+                'recovered_collapsed_table_rows' => 0,
+                'recovered_prefixed_continuation_rows' => 0,
                 'ignored_rows' => 0,
             ];
 
+            $declaredTotal = $this->declaredTotal($document);
             $this->parseTableRows($document, $records, $diagnostics);
             $this->parseOrphanParagraphRecords($document, $records, $diagnostics);
             ksort($records, SORT_NUMERIC);
@@ -47,16 +56,30 @@ class VoterDocxParser
             }
 
             $numbers = array_map('intval', array_keys($records));
-            $minimum = min($numbers);
             $maximum = max($numbers);
+            $reasonableMaximum = $declaredTotal !== null
+                ? max($declaredTotal + 100, (int) ceil($declaredTotal * 1.1))
+                : self::MAX_SOURCE_NUMBER_WITHOUT_DECLARED_TOTAL;
+            if ($maximum > $reasonableMaximum) {
+                throw new RuntimeException(
+                    "A malformed Word table row produced voter number {$maximum}. "
+                    . 'The row may contain multiple voters that could not be separated safely.'
+                );
+            }
+
             $present = array_fill_keys($numbers, true);
-            for ($number = $minimum; $number <= $maximum; $number++) {
+            $expectedMaximum = $declaredTotal ?? $maximum;
+            for ($number = 1; $number <= $expectedMaximum; $number++) {
                 if (!isset($present[$number])) {
-                    $diagnostics['missing_source_numbers'][] = $number;
+                    $diagnostics['missing_source_number_count']++;
+                    if (count($diagnostics['missing_source_numbers']) < self::MAX_REPORTED_MISSING_SOURCE_NUMBERS) {
+                        $diagnostics['missing_source_numbers'][] = $number;
+                    } else {
+                        $diagnostics['missing_source_numbers_truncated'] = true;
+                    }
                 }
             }
 
-            $declaredTotal = $this->declaredTotal($document);
             $diagnostics['declared_total_matches'] = $declaredTotal === null || $declaredTotal === count($records);
 
             return [
@@ -77,11 +100,53 @@ class VoterDocxParser
 
         foreach ($xpath->query('//w:tbl//w:tr') ?: [] as $row) {
             $cells = [];
+            $paragraphCells = [];
+            $tabCells = [];
             foreach ($xpath->query('./w:tc', $row) ?: [] as $cell) {
                 $cells[] = $this->nodeText($xpath, $cell);
+                $paragraphCells[] = $this->cellParagraphs($xpath, $cell);
+                $tabCells[] = $this->cellTabValues($xpath, $cell);
             }
 
-            if (count($cells) < 2 || $this->isHeaderRow($cells)) {
+            if ($cells === [] || $this->isHeaderRow($cells)) {
+                continue;
+            }
+
+            $mergedRecords = $this->mergedTableRecords($paragraphCells);
+            if ($mergedRecords !== null) {
+                foreach ($mergedRecords as $record) {
+                    $lastSourceNumber = $record['source_record_no'];
+                    $this->putRecord($records, $record, $diagnostics);
+                }
+                $diagnostics['merged_table_rows']++;
+                $diagnostics['recovered_merged_records'] += count($mergedRecords);
+                continue;
+            }
+
+            $collapsedRecord = $this->collapsedTableRecord($cells, $tabCells);
+            if ($collapsedRecord !== null) {
+                $lastSourceNumber = $collapsedRecord['source_record_no'];
+                $this->putRecord($records, $collapsedRecord, $diagnostics);
+                $diagnostics['recovered_collapsed_table_rows']++;
+                continue;
+            }
+
+            $prefixedRecord = $this->prefixedContinuationTableRecord($cells, $tabCells);
+            if ($prefixedRecord !== null) {
+                if ($lastSourceNumber !== null && isset($records[$lastSourceNumber])) {
+                    $records[$lastSourceNumber]['raw_name'] = trim(
+                        $records[$lastSourceNumber]['raw_name'] . ' ' . $prefixedRecord['name_continuation']
+                    );
+                    $diagnostics['continuation_rows']++;
+                }
+                $lastSourceNumber = $prefixedRecord['record']['source_record_no'];
+                $this->putRecord($records, $prefixedRecord['record'], $diagnostics);
+                $diagnostics['recovered_prefixed_continuation_rows']++;
+                continue;
+            }
+
+            if (count($cells) < 2) {
+                $diagnostics['ignored_rows']++;
                 continue;
             }
 
@@ -107,6 +172,283 @@ class VoterDocxParser
 
             $diagnostics['ignored_rows']++;
         }
+    }
+
+    private function mergedTableRecords(array $paragraphCells): ?array
+    {
+        if (count($paragraphCells) < 5) {
+            return null;
+        }
+
+        if (count($paragraphCells) >= 6) {
+            $numberValues = $this->paragraphValues($paragraphCells[0], null);
+            if (count($numberValues) < 2) {
+                return null;
+            }
+
+            $numbers = array_map(fn ($value) => $this->sourceNumber($value), $numberValues);
+            if (in_array(null, $numbers, true) || !$this->areConsecutive($numbers)) {
+                return null;
+            }
+
+            $recordCount = count($numbers);
+            $names = $this->paragraphValues($paragraphCells[1], $recordCount);
+            $addresses = $this->paragraphValues($paragraphCells[2], $recordCount);
+            $birthdays = $this->paragraphValues($paragraphCells[count($paragraphCells) - 3], $recordCount);
+            $sexes = $this->paragraphValues($paragraphCells[count($paragraphCells) - 2], $recordCount);
+            $precincts = $this->paragraphValues($paragraphCells[count($paragraphCells) - 1], $recordCount);
+
+            if (in_array(null, [$names, $addresses, $birthdays, $sexes, $precincts], true)) {
+                return null;
+            }
+
+            $records = [];
+            foreach ($numbers as $index => $number) {
+                $records[] = $this->record(
+                    $number,
+                    $names[$index],
+                    $addresses[$index],
+                    $birthdays[$index],
+                    $sexes[$index],
+                    $precincts[$index]
+                );
+            }
+
+            return $records;
+        }
+
+        $firstCellValues = $this->paragraphValues($paragraphCells[0], null);
+        if (count($firstCellValues) < 2) {
+            return null;
+        }
+
+        $numbers = [];
+        $names = [];
+        foreach ($firstCellValues as $value) {
+            if (!preg_match('/^([0-9]{1,3}(?:,[0-9]{3})*|[0-9]+)\s+(.+)$/u', $value, $match)) {
+                return null;
+            }
+            $number = $this->sourceNumber($match[1]);
+            if ($number === null) {
+                return null;
+            }
+            $numbers[] = $number;
+            $names[] = $match[2];
+        }
+        if (!$this->areConsecutive($numbers)) {
+            return null;
+        }
+
+        $recordCount = count($numbers);
+        $addresses = $this->paragraphValues($paragraphCells[1], $recordCount);
+        $birthdays = $this->paragraphValues($paragraphCells[count($paragraphCells) - 3], $recordCount);
+        $sexes = $this->paragraphValues($paragraphCells[count($paragraphCells) - 2], $recordCount);
+        $precincts = $this->paragraphValues($paragraphCells[count($paragraphCells) - 1], $recordCount);
+        if (in_array(null, [$addresses, $birthdays, $sexes, $precincts], true)) {
+            return null;
+        }
+
+        $records = [];
+        foreach ($numbers as $index => $number) {
+            $records[] = $this->record(
+                $number,
+                $names[$index],
+                $addresses[$index],
+                $birthdays[$index],
+                $sexes[$index],
+                $precincts[$index]
+            );
+        }
+
+        return $records;
+    }
+
+    private function collapsedTableRecord(array $cells, array $tabCells): ?array
+    {
+        if (count($cells) === 1) {
+            $parts = $tabCells[0] ?? [];
+            if (count($parts) < 6) {
+                return null;
+            }
+
+            $number = $this->sourceNumber($parts[0]);
+            $precinct = $this->precinctFromSegment($parts[5]);
+            if (
+                $number === null
+                || $parts[1] === ''
+                || $parts[2] === ''
+                || !preg_match('/^\d{2}\/\d{2}\/\d{4}$/', $parts[3])
+                || !preg_match('/^[MF]$/i', $parts[4])
+                || $precinct === null
+            ) {
+                return null;
+            }
+
+            return $this->record($number, $parts[1], $parts[2], $parts[3], $parts[4], $precinct);
+        }
+
+        if (count($cells) >= 3 && count($cells) < 5) {
+            $number = $this->sourceNumber($cells[0]);
+            $parts = $tabCells[count($tabCells) - 1] ?? [];
+            $precinct = isset($parts[3]) ? $this->precinctFromSegment($parts[3]) : null;
+            if (
+                $number === null
+                || $cells[1] === ''
+                || count($parts) < 4
+                || !preg_match('/^\d{2}\/\d{2}\/\d{4}$/', $parts[1])
+                || !preg_match('/^[MF]$/i', $parts[2])
+                || $precinct === null
+            ) {
+                return null;
+            }
+
+            return $this->record($number, $cells[1], $parts[0], $parts[1], $parts[2], $precinct);
+        }
+
+        return null;
+    }
+
+    private function prefixedContinuationTableRecord(array $cells, array $tabCells): ?array
+    {
+        if (count($cells) < 5) {
+            return null;
+        }
+
+        $firstCellParts = $tabCells[0] ?? [];
+        if (count($firstCellParts) !== 3) {
+            return null;
+        }
+
+        [$nameContinuation, $sourceNumber, $name] = $firstCellParts;
+        $number = $this->sourceNumber($sourceNumber);
+        $birthday = $cells[count($cells) - 3];
+        $sex = $cells[count($cells) - 2];
+        $precinct = $this->precinctFromSegment($cells[count($cells) - 1]);
+        if (
+            $nameContinuation === ''
+            || $number === null
+            || $name === ''
+            || $cells[1] === ''
+            || !preg_match('/^\d{2}\/\d{2}\/\d{4}$/', $birthday)
+            || !preg_match('/^[MF]$/i', $sex)
+            || $precinct === null
+        ) {
+            return null;
+        }
+
+        return [
+            'name_continuation' => $nameContinuation,
+            'record' => $this->record($number, $name, $cells[1], $birthday, $sex, $precinct),
+        ];
+    }
+
+    private function cellParagraphs(DOMXPath $xpath, DOMNode $cell): array
+    {
+        $paragraphs = [];
+        foreach ($xpath->query('./w:p', $cell) ?: [] as $paragraph) {
+            $paragraphs[] = $this->nodeText($xpath, $paragraph);
+        }
+
+        return $paragraphs;
+    }
+
+    private function cellTabValues(DOMXPath $xpath, DOMNode $cell): array
+    {
+        $values = [];
+        foreach ($xpath->query('./w:p', $cell) ?: [] as $paragraph) {
+            $current = '';
+            foreach ($xpath->query('.//w:t|.//w:tab|.//w:br', $paragraph) ?: [] as $node) {
+                if ($node instanceof DOMElement && $node->localName === 't') {
+                    $current .= $node->textContent;
+                    continue;
+                }
+
+                $value = $this->clean($current);
+                if ($value !== '') {
+                    $values[] = $value;
+                }
+                $current = '';
+            }
+
+            $value = $this->clean($current);
+            if ($value !== '') {
+                $values[] = $value;
+            }
+        }
+
+        return $values;
+    }
+
+    private function paragraphValues(array $paragraphs, ?int $expectedCount): ?array
+    {
+        $values = array_values(array_filter(
+            array_map(fn ($value) => $this->clean($value), $paragraphs),
+            fn ($value) => $value !== ''
+        ));
+
+        if ($expectedCount === null || count($values) === $expectedCount) {
+            return $values;
+        }
+
+        $groups = [];
+        $current = [];
+        foreach ($paragraphs as $paragraph) {
+            $value = $this->clean($paragraph);
+            if ($value === '') {
+                if ($current !== []) {
+                    $groups[] = implode(' ', $current);
+                    $current = [];
+                }
+                continue;
+            }
+            $current[] = $value;
+        }
+        if ($current !== []) {
+            $groups[] = implode(' ', $current);
+        }
+
+        return count($groups) === $expectedCount ? $groups : null;
+    }
+
+    private function sourceNumber(string $value): ?int
+    {
+        $value = $this->clean($value);
+        if (!preg_match('/^(?:[0-9]{1,3}(?:,[0-9]{3})*|[0-9]+)$/', $value)) {
+            return null;
+        }
+
+        $digits = str_replace(',', '', $value);
+        if (strlen($digits) > 9) {
+            return null;
+        }
+
+        $number = (int) $digits;
+        return $number > 0 ? $number : null;
+    }
+
+    private function precinctFromSegment(string $value): ?string
+    {
+        $value = strtoupper($this->clean($value));
+        if (!preg_match('/^([0-9]{3,5}[A-Z]?)\b/', $value, $match)) {
+            return null;
+        }
+
+        return $match[1];
+    }
+
+    private function areConsecutive(array $numbers): bool
+    {
+        if (count($numbers) < 2) {
+            return false;
+        }
+
+        for ($index = 1; $index < count($numbers); $index++) {
+            if ($numbers[$index] !== $numbers[$index - 1] + 1) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private function tableRecord(array $cells): ?array
