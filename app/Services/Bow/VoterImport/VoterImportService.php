@@ -222,7 +222,7 @@ class VoterImportService
                 foreach ($rows as $row) {
                     $row->normalized_address = $this->normalizer->rawAddressKey($row->raw_address);
                     $row->location_key = $this->normalizer->locationKey($row->raw_address, $geography);
-                    $match = $this->resolvePurok($row->location_key, $puroks, $aliases);
+                    $match = $this->resolvePurok($row->location_key, $puroks, $aliases, $row->raw_address);
 
                     if ($match['purok_id']) {
                         $row->purok_id = $match['purok_id'];
@@ -662,7 +662,7 @@ class VoterImportService
             [$precinctNo, $precinctIssue] = $this->parsePrecinct($record['raw_precinct']);
             $addressKey = $this->normalizer->rawAddressKey($record['raw_address']);
             $locationKey = $this->normalizer->locationKey($record['raw_address'], $geography);
-            $match = $this->resolvePurok($locationKey, $puroks, $aliases);
+            $match = $this->resolvePurok($locationKey, $puroks, $aliases, $record['raw_address']);
             $purokId = $match['purok_id'];
             $resolution = $purokId ? 'MATCHED' : 'PROPOSED_NEW';
             $proposedPurokName = $purokId ? null : $this->normalizer->newPurokName($record['raw_address']);
@@ -806,8 +806,25 @@ class VoterImportService
         return [$code, null];
     }
 
-    private function resolvePurok(string $locationKey, Collection $puroks, Collection $aliases): array
+    private function resolvePurok(
+        string $locationKey,
+        Collection $puroks,
+        Collection $aliases,
+        mixed $sourceAddress = null
+    ): array
     {
+        $sourceMatches = $puroks->filter(fn ($purok) => $this->normalizer->exactSource(
+            $purok->purok_name,
+            $sourceAddress
+        ));
+        if ($sourceMatches->count() === 1) {
+            return [
+                'purok_id' => (int) $sourceMatches->first()->purok_id,
+                'strategy' => 'EXACT_SOURCE',
+                'score' => 100.0,
+            ];
+        }
+
         if ($locationKey === '') {
             return ['purok_id' => null, 'strategy' => 'CREATE_AS_SOURCE', 'score' => 0.0];
         }
@@ -964,10 +981,11 @@ class VoterImportService
             ->pluck('proposed_purok_name');
 
         foreach ($proposedNames as $name) {
-            $existing = BowPurok::query()
+            $puroks = BowPurok::query()
                 ->where('barangay_id', $barangay->barangay_id)
-                ->get()
-                ->first(fn ($purok) => $this->normalizer->same($purok->purok_name, $name));
+                ->get();
+            $existing = $puroks->first(fn ($purok) => $this->normalizer->exactSource($purok->purok_name, $name))
+                ?: $puroks->first(fn ($purok) => $this->normalizer->same($purok->purok_name, $name));
             $purok = $existing ?: BowPurok::query()->create([
                 'barangay_id' => $barangay->barangay_id,
                 'purok_name' => strtoupper($name),
