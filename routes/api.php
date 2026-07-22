@@ -35,7 +35,7 @@ Route::middleware(['auth:sanctum', 'active', 'role:administrator'])->group(funct
 });
 
 Route::middleware(['auth:sanctum', 'active'])->group(function () {
-    Route::middleware('permission:bow.manage_geo,bow.view_geo')->group(function () {
+    Route::middleware('permission:bow.manage_geo,bow.edit_geo,bow.view_geo')->group(function () {
         Route::get('bow/dashboard/voter-insights', [DashboardStatsController::class, 'voterInsights']);
         Route::get('bow/barangay', [BarangayController::class, 'index']);
         Route::get('bow/purok/by-barangay/{barangay_id}', [PurokController::class, 'getByBarangay'])
@@ -60,35 +60,46 @@ Route::middleware(['auth:sanctum', 'active'])->group(function () {
         Route::delete('bow/voter-imports/{id}', [VoterImportController::class, 'destroy'])->whereNumber('id');
 
         Route::post('bow/barangay', [BarangayController::class, 'store']);
+
+        Route::post('bow/purok', [PurokController::class, 'store']);
+
+        Route::post('bow/precinct', [PrecinctController::class, 'store']);
+
+        Route::post('bow/tribes', [TribeController::class, 'store']);
+
+        Route::post('bow/religions', [ReligionController::class, 'store']);
+
+        Route::post('bow/recipients', [RecipientController::class, 'store']);
+
+        Route::post('bow/voters', [RecipientController::class, 'store']);
+    });
+
+    Route::middleware('permission:bow.manage_geo,bow.edit_geo')->group(function () {
         Route::put('bow/barangay/{id}', [BarangayController::class, 'update'])->whereNumber('id');
         Route::patch('bow/barangay/{id}', [BarangayController::class, 'update'])->whereNumber('id');
 
-        Route::post('bow/purok', [PurokController::class, 'store']);
         Route::put('bow/purok/{id}', [PurokController::class, 'update'])->whereNumber('id');
         Route::patch('bow/purok/{id}', [PurokController::class, 'update'])->whereNumber('id');
 
-        Route::post('bow/precinct', [PrecinctController::class, 'store']);
         Route::put('bow/precinct/{id}', [PrecinctController::class, 'update'])->whereNumber('id');
         Route::patch('bow/precinct/{id}', [PrecinctController::class, 'update'])->whereNumber('id');
 
-        Route::post('bow/tribes', [TribeController::class, 'store']);
         Route::put('bow/tribes/{id}', [TribeController::class, 'update'])->whereNumber('id');
         Route::patch('bow/tribes/{id}', [TribeController::class, 'update'])->whereNumber('id');
 
-        Route::post('bow/religions', [ReligionController::class, 'store']);
         Route::put('bow/religions/{id}', [ReligionController::class, 'update'])->whereNumber('id');
         Route::patch('bow/religions/{id}', [ReligionController::class, 'update'])->whereNumber('id');
 
-        Route::post('bow/recipients', [RecipientController::class, 'store']);
         Route::put('bow/recipients/{id}', [RecipientController::class, 'update'])->whereNumber('id');
         Route::patch('bow/recipients/{id}', [RecipientController::class, 'update'])->whereNumber('id');
 
-        Route::post('bow/voters', [RecipientController::class, 'store']);
         Route::put('bow/voters/{id}', [RecipientController::class, 'update'])->whereNumber('id');
         Route::patch('bow/voters/{id}', [RecipientController::class, 'update'])->whereNumber('id');
     });
 
     Route::middleware(['permission:bow.manage_geo', 'can_delete'])->group(function () {
+        Route::delete('bow/voter-imports/{id}/barangay', [VoterImportController::class, 'destroyBarangay'])
+            ->whereNumber('id');
         Route::delete('bow/barangay/{id}', [BarangayController::class, 'destroy'])->whereNumber('id');
         Route::delete('bow/purok/{id}', [PurokController::class, 'destroy'])->whereNumber('id');
         Route::delete('bow/precinct/{id}', [PrecinctController::class, 'destroy'])->whereNumber('id');

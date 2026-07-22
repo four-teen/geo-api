@@ -21,7 +21,7 @@ class AdminController extends BaseController
             'name'=>'required',
             'username'=>'required|unique:users,username',
             'password'=>'required',
-            'role' => 'nullable|in:administrator,staff,municipal_staff,viewer',
+            'role' => 'nullable|in:administrator,staff,voter_editor,municipal_staff,viewer',
             'designation' => 'nullable|string|max:255',
             'can_delete' => 'nullable|boolean',
         ]);
@@ -40,7 +40,9 @@ class AdminController extends BaseController
         $input['is_active'] = $input['is_active'] ?? true;
         $input['can_delete'] = ($input['role'] ?? 'staff') === 'administrator'
             ? true
-            : (bool) ($input['can_delete'] ?? false);
+            : (($input['role'] ?? 'staff') === 'voter_editor'
+                ? false
+                : (bool) ($input['can_delete'] ?? false));
         $input['barangay_scope'] = $input['barangay_scope'] ?? 'ALL';
         $user = User::create($input);
         $success['token'] = $this->normalizeAccessToken($user->createToken('MyApp')->plainTextToken);

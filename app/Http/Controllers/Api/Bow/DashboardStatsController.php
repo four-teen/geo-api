@@ -53,7 +53,12 @@ class DashboardStatsController extends Controller
         $leadingProfession = $topProfessions->first();
 
         $ageRows = $this->buildAgeEvaluationRows(clone $baseQuery);
-        $topBarangays = $this->buildTopBarangays(clone $baseQuery, $totalVoters);
+        $barangayDistribution = $this->buildBarangayDistribution($request, $totalVoters);
+        $topBarangays = $barangayDistribution
+            ->where('total', '>', 0)
+            ->sortByDesc('total')
+            ->take(6)
+            ->values();
         $purokDistribution = $this->buildPurokDistribution(clone $baseQuery);
         $topReligions = collect();
         $topTribes = collect();
@@ -83,6 +88,12 @@ class DashboardStatsController extends Controller
             'profession_snapshot' => $topProfessions->take(4)->values(),
             'top_professions' => $topProfessions->take(8)->values(),
             'top_barangays' => $topBarangays,
+            'barangay_distribution' => $barangayDistribution,
+            'barangay_summary' => [
+                'total_barangays' => $barangayDistribution->count(),
+                'barangays_with_voters' => $barangayDistribution->where('total', '>', 0)->count(),
+                'barangays_without_voters' => $barangayDistribution->where('total', 0)->count(),
+            ],
             'purok_distribution' => $purokDistribution,
             'purok_summary' => [
                 'unique_puroks' => $purokDistribution->count(),
@@ -433,18 +444,27 @@ class DashboardStatsController extends Controller
         })->values();
     }
 
-    private function buildTopBarangays($baseQuery, int $totalVoters)
+    private function buildBarangayDistribution(Request $request, int $totalVoters)
     {
-        return $baseQuery
-            ->leftJoin('bow_tbl_barangays as b', 'b.barangay_id', '=', 'r.barangay')
-            ->selectRaw("COALESCE(b.barangay_name, 'UN ASSIGNED') as barangay_label")
-            ->selectRaw('COUNT(*) as total')
-            ->groupBy('barangay_label')
-            ->orderByDesc('total')
-            ->limit(6)
+        $query = DB::table('bow_tbl_barangays as b')
+            ->leftJoin('bow_tbl_recipients as r', 'r.barangay', '=', 'b.barangay_id')
+            ->select([
+                'b.barangay_id',
+                'b.barangay_name',
+                'b.status',
+            ])
+            ->selectRaw('COUNT(r.recipient_id) as total')
+            ->groupBy('b.barangay_id', 'b.barangay_name', 'b.status')
+            ->orderBy('b.barangay_name');
+
+        BowScope::applyBarangayFilter($query, $request->user(), 'b.barangay_id');
+
+        return $query
             ->get()
             ->map(fn ($row) => [
-                'label' => (string) $row->barangay_label,
+                'barangay_id' => (int) $row->barangay_id,
+                'label' => (string) $row->barangay_name,
+                'status' => strtoupper((string) ($row->status ?: 'ACTIVE')),
                 'total' => (int) $row->total,
                 'share' => $totalVoters > 0 ? round(((int) $row->total / $totalVoters) * 100, 1) : 0.0,
             ])

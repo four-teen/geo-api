@@ -18,12 +18,14 @@ class AccountManagementController extends BaseController
 {
     private const DEFAULT_PERMISSIONS = [
         ['code' => 'bow.manage_geo', 'label' => 'Manage Barangay, Purok, Precinct, and Voters'],
+        ['code' => 'bow.edit_geo', 'label' => 'Edit and Archive Existing Geo and Voter Records'],
         ['code' => 'bow.view_geo', 'label' => 'View Barangay, Purok, Precinct, and Voters'],
     ];
 
     private const ROLE_LABELS = [
         'administrator' => 'Administrator',
         'staff' => 'Staff',
+        'voter_editor' => 'Voter Records Editor',
         'municipal_staff' => 'Municipal Staff',
         'viewer' => 'Viewer',
     ];
@@ -275,9 +277,11 @@ class AccountManagementController extends BaseController
             return $validated;
         }
 
-        $validated['can_delete'] = $actor->isAdministrator()
-            ? (bool) ($validated['can_delete'] ?? false)
-            : false;
+        $validated['can_delete'] = $validated['role'] === 'voter_editor'
+            ? false
+            : ($actor->isAdministrator()
+                ? (bool) ($validated['can_delete'] ?? false)
+                : false);
         $validated['barangay_scope'] = $validated['barangay_scope'] ?? 'ALL';
         $validated['permission_codes'] = $this->defaultPermissionCodesForRole($validated['role']);
 
@@ -320,6 +324,10 @@ class AccountManagementController extends BaseController
     {
         if ($role === 'staff') {
             return ['bow.manage_geo', 'bow.view_geo'];
+        }
+
+        if ($role === 'voter_editor') {
+            return ['bow.edit_geo', 'bow.view_geo'];
         }
 
         if (in_array($role, ['municipal_staff', 'viewer'], true)) {
