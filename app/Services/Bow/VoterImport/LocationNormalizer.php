@@ -49,10 +49,22 @@ class LocationNormalizer
 
     public function same(mixed $left, mixed $right): bool
     {
+        if ($this->exactSource($left, $right)) {
+            return true;
+        }
+
         $leftText = $this->text($left);
         $rightText = $this->text($right);
 
         return $leftText !== '' && ($leftText === $rightText || $this->compact($leftText) === $this->compact($rightText));
+    }
+
+    public function exactSource(mixed $left, mixed $right): bool
+    {
+        $leftText = $this->sourceText($left);
+        $rightText = $this->sourceText($right);
+
+        return $leftText !== '' && $leftText === $rightText;
     }
 
     public function rawAddressKey(mixed $address): string
@@ -113,5 +125,13 @@ class LocationNormalizer
     {
         preg_match_all('/\b\d+\b/', $value, $matches);
         return array_values(array_unique($matches[0] ?? []));
+    }
+
+    private function sourceText(mixed $value): string
+    {
+        $normalized = Str::upper(Str::ascii(trim((string) $value)));
+        $normalized = preg_replace('/\s+/', ' ', $normalized) ?? $normalized;
+
+        return trim($normalized);
     }
 }
