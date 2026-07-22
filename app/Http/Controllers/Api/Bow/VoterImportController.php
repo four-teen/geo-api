@@ -169,4 +169,23 @@ class VoterImportController extends Controller
             'message' => 'Draft import and its private upload were removed.',
         ]);
     }
+
+    public function destroyBarangay(Request $request, int $id)
+    {
+        $validated = $request->validate([
+            'confirmation' => ['required', 'string', 'max:150'],
+        ]);
+        $import = BowVoterImport::query()->findOrFail($id);
+        $summary = $this->service->deleteBarangayImportData(
+            $import,
+            $request->user(),
+            $validated['confirmation']
+        );
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Barangay voter import data was removed successfully.',
+            'data' => $summary,
+        ]);
+    }
 }

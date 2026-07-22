@@ -522,6 +522,90 @@ class VoterImportService
         $import->delete();
     }
 
+    public function deleteBarangayImportData(
+        BowVoterImport $import,
+        User $user,
+        string $confirmation
+    ): array {
+        $this->ensureAccess($import, $user);
+
+        if (!$import->barangay_id || !in_array($import->status, ['COMMITTED', 'SUPERSEDED'], true)) {
+            throw ValidationException::withMessages([
+                'import' => ['Only a committed barangay import can remove barangay import data.'],
+            ]);
+        }
+
+        if (!$this->normalizer->same($confirmation, $import->barangay_name)) {
+            throw ValidationException::withMessages([
+                'confirmation' => ["Type {$import->barangay_name} exactly to confirm this deletion."],
+            ]);
+        }
+
+        $barangayId = (int) $import->barangay_id;
+        $result = DB::transaction(function () use ($import, $barangayId) {
+            $lockedImport = BowVoterImport::query()
+                ->lockForUpdate()
+                ->findOrFail($import->import_id);
+
+            if ((int) $lockedImport->barangay_id !== $barangayId) {
+                throw ValidationException::withMessages([
+                    'import' => ['The import barangay changed. Refresh the page before deleting.'],
+                ]);
+            }
+
+            $barangayImports = BowVoterImport::query()
+                ->where('barangay_id', $barangayId)
+                ->lockForUpdate()
+                ->get(['import_id', 'stored_path']);
+            $importIds = $barangayImports
+                ->pluck('import_id')
+                ->map(fn ($id) => (int) $id)
+                ->values();
+            $storedPaths = $barangayImports
+                ->pluck('stored_path')
+                ->filter()
+                ->values()
+                ->all();
+
+            $deletedVoters = BowRecipient::query()
+                ->where('barangay', $barangayId)
+                ->whereNotNull('import_id')
+                ->delete();
+
+            if ($importIds->isNotEmpty()) {
+                BowPurok::query()
+                    ->whereIn('created_from_import_id', $importIds->all())
+                    ->update([
+                        'created_from_import_id' => null,
+                        'updated_at' => now(),
+                    ]);
+
+                BowVoterImportRow::query()
+                    ->whereIn('import_id', $importIds->all())
+                    ->delete();
+
+                BowVoterImport::query()
+                    ->whereIn('import_id', $importIds->all())
+                    ->delete();
+            }
+
+            return [
+                'barangay_id' => $barangayId,
+                'barangay_name' => $lockedImport->barangay_name,
+                'deleted_voters' => (int) $deletedVoters,
+                'deleted_imports' => $importIds->count(),
+                'stored_paths' => $storedPaths,
+            ];
+        });
+
+        if ($result['stored_paths'] !== []) {
+            Storage::disk('local')->delete($result['stored_paths']);
+        }
+        unset($result['stored_paths']);
+
+        return $result;
+    }
+
     public function serializeImport(BowVoterImport $import): array
     {
         return [
