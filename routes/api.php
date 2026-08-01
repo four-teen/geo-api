@@ -10,6 +10,7 @@ use App\Http\Controllers\Api\Bow\RecipientController;
 use App\Http\Controllers\Api\Bow\ReligionController;
 use App\Http\Controllers\Api\Bow\TribeController;
 use App\Http\Controllers\Api\Bow\VoterImportController;
+use App\Http\Controllers\Api\Bow\VoterReportController;
 use Illuminate\Support\Facades\Route;
 
 Route::controller(AdminController::class)->group(function () {
@@ -32,6 +33,7 @@ Route::middleware(['auth:sanctum', 'active', 'role:administrator'])->group(funct
     Route::put('admin/accounts/{id}', [AccountManagementController::class, 'update'])->whereNumber('id');
     Route::patch('admin/accounts/{id}', [AccountManagementController::class, 'update'])->whereNumber('id');
     Route::delete('admin/accounts/{id}', [AccountManagementController::class, 'destroy'])->whereNumber('id');
+    Route::get('bow/reports/voters', [VoterReportController::class, 'index']);
 });
 
 Route::middleware(['auth:sanctum', 'active'])->group(function () {
