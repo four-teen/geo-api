@@ -33,6 +33,7 @@ Route::middleware(['auth:sanctum', 'active', 'role:administrator'])->group(funct
     Route::put('admin/accounts/{id}', [AccountManagementController::class, 'update'])->whereNumber('id');
     Route::patch('admin/accounts/{id}', [AccountManagementController::class, 'update'])->whereNumber('id');
     Route::delete('admin/accounts/{id}', [AccountManagementController::class, 'destroy'])->whereNumber('id');
+    Route::get('bow/reports/voters/records', [VoterReportController::class, 'records']);
     Route::get('bow/reports/voters', [VoterReportController::class, 'index']);
 });
 

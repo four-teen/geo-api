@@ -15,86 +15,75 @@ class VoterReportController extends Controller
         $validated = $request->validate([
             'barangay_id' => ['nullable', 'integer', 'min:0'],
             'status' => ['nullable', Rule::in(['ALL', 'ACTIVE', 'INACTIVE'])],
+            'search' => ['nullable', 'string', 'max:120'],
         ]);
 
         $barangayId = array_key_exists('barangay_id', $validated)
             ? (int) $validated['barangay_id']
             : null;
         $status = strtoupper((string) ($validated['status'] ?? 'ALL'));
+        $search = trim((string) ($validated['search'] ?? ''));
 
         $options = BowBarangay::query()
             ->orderBy('barangay_name')
             ->get(['barangay_id', 'barangay_name', 'status']);
+        $counts = $this->summaryCounts($barangayId);
+        $filteredCounts = $search !== ''
+            ? $this->filteredSummaryCounts($barangayId, $status, $search)
+            : collect();
+        $summaryRows = [];
 
-        $barangays = $options
-            ->when(
-                $barangayId !== null && $barangayId > 0,
-                fn ($rows) => $rows->where('barangay_id', $barangayId)
-            )
-            ->when($barangayId === 0, fn ($rows) => $rows->take(0))
-            ->values();
-
-        $query = $this->reportQuery();
-        $this->applyBarangayFilter($query, $barangayId);
-
-        $allRecords = $query->get()
-            ->map(fn ($record) => $this->serializeRecord($record))
-            ->values()
-            ->all();
-
-        usort($allRecords, fn (array $left, array $right) => $this->compareRecords($left, $right));
-
-        $summary = [];
-        foreach ($barangays as $barangay) {
-            $summary[(int) $barangay->barangay_id] = [
-                'barangay_id' => (int) $barangay->barangay_id,
-                'barangay_name' => (string) $barangay->barangay_name,
-                'barangay_status' => strtoupper((string) $barangay->status),
-                'active' => 0,
-                'inactive' => 0,
-                'total' => 0,
-            ];
-        }
-
-        foreach ($allRecords as $record) {
-            $key = (int) $record['barangay_id'];
-            if (!isset($summary[$key])) {
-                $summary[$key] = $this->emptySummary($record);
+        foreach ($options as $barangay) {
+            $id = (int) $barangay->barangay_id;
+            if (($barangayId !== null && $barangayId !== $id) || $barangayId === 0) {
+                continue;
             }
 
-            $summary[$key][$record['status'] === 'ACTIVE' ? 'active' : 'inactive']++;
-            $summary[$key]['total']++;
+            $summaryRows[] = $this->summaryRow(
+                $id,
+                (string) $barangay->barangay_name,
+                strtoupper((string) $barangay->status),
+                $counts->get($id),
+                $filteredCounts->get($id),
+                $status,
+                $search
+            );
         }
 
-        $summaryRows = array_values($summary);
-        usort($summaryRows, fn (array $left, array $right) => $this->compareSummaries($left, $right));
+        if (($barangayId === null || $barangayId === 0) && $counts->has(0)) {
+            $summaryRows[] = $this->summaryRow(
+                0,
+                'Unassigned',
+                'UNASSIGNED',
+                $counts->get(0),
+                $filteredCounts->get(0),
+                $status,
+                $search
+            );
+        }
+
         $totals = $this->calculateTotals($summaryRows);
-
-        $records = array_values(array_filter(
-            $allRecords,
-            fn (array $record) => $status === 'ALL' || $record['status'] === $status
-        ));
-
-        foreach ($records as $index => &$record) {
-            $record['report_no'] = $index + 1;
-        }
-        unset($record);
-
-        $hasUnassigned = $this->hasUnassignedVoters();
+        $filteredTotal = array_sum(array_column($summaryRows, 'filtered_records'));
+        $hasUnassigned = $counts->has(0);
 
         return response()->json([
             'success' => true,
             'generated_at' => now()->toIso8601String(),
-            'filters' => ['barangay_id' => $barangayId, 'status' => $status],
+            'filters' => [
+                'barangay_id' => $barangayId,
+                'status' => $status,
+                'search' => $search,
+            ],
             'totals' => array_merge($totals, [
                 'barangays' => count(array_filter(
                     $summaryRows,
                     fn (array $row) => $row['barangay_id'] > 0
                 )),
-                'filtered_records' => count($records),
+                'filtered_records' => $filteredTotal,
             ]),
             'barangays' => $summaryRows,
-            'records' => $records,
+            'records' => [],
+            'records_included' => false,
             'barangay_options' => $options
                 ->map(fn (BowBarangay $barangay) => [
                     'barangay_id' => (int) $barangay->barangay_id,
@@ -106,6 +95,71 @@ class VoterReportController extends Controller
                 ]))
                 ->values(),
         ]);
+    }
+
+    private function summaryQuery()
+    {
+        return DB::table('bow_tbl_recipients as voters')
+            ->leftJoin('bow_tbl_barangays as barangays', 'barangays.barangay_id', '=', 'voters.barangay')
+            ->leftJoin('bow_tbl_puroks as puroks', 'puroks.purok_id', '=', 'voters.purok');
+    }
+
+    private function summaryCounts(?int $barangayId)
+    {
+        $active = 'UPPER(TRIM(COALESCE(voters.status, \'\'))) IN (\'ACTIVE\', \'VERIFIED\', \'PENDING\')';
+        $query = $this->summaryQuery()
+            ->selectRaw('COALESCE(barangays.barangay_id, 0) as barangay_id')
+            ->selectRaw('SUM(CASE WHEN ' . $active . ' THEN 1 ELSE 0 END) as active')
+            ->selectRaw('SUM(CASE WHEN ' . $active . ' THEN 0 ELSE 1 END) as inactive')
+            ->selectRaw('COUNT(*) as total')
+            ->groupByRaw('COALESCE(barangays.barangay_id, 0)');
+
+        $this->applyBarangayFilter($query, $barangayId);
+        return $query->get()->keyBy(fn ($row) => (int) $row->barangay_id);
+    }
+
+    private function filteredSummaryCounts(?int $barangayId, string $status, string $search)
+    {
+        $query = $this->summaryQuery()
+            ->selectRaw('COALESCE(barangays.barangay_id, 0) as barangay_id')
+            ->selectRaw('COUNT(*) as filtered_records')
+            ->groupByRaw('COALESCE(barangays.barangay_id, 0)');
+
+        $this->applyBarangayFilter($query, $barangayId);
+        $this->applyStatusFilter($query, $status);
+        $this->applySearchFilter($query, $search);
+        return $query->get()->keyBy(fn ($row) => (int) $row->barangay_id);
+    }
+
+    private function summaryRow(
+        int $id,
+        string $name,
+        string $barangayStatus,
+        ?object $count,
+        ?object $filteredCount,
+        string $status,
+        string $search
+    ): array {
+        $active = (int) ($count->active ?? 0);
+        $inactive = (int) ($count->inactive ?? 0);
+        $total = (int) ($count->total ?? 0);
+        $filtered = $search !== ''
+            ? (int) ($filteredCount->filtered_records ?? 0)
+            : match ($status) {
+                'ACTIVE' => $active,
+                'INACTIVE' => $inactive,
+                default => $total,
+            };
+
+        return [
+            'barangay_id' => $id,
+            'barangay_name' => $name,
+            'barangay_status' => $barangayStatus,
+            'active' => $active,
+            'inactive' => $inactive,
+            'total' => $total,
+            'filtered_records' => $filtered,
+        ];
     }
 
     private function reportQuery()
@@ -197,20 +251,6 @@ class VoterReportController extends Controller
             : 'INACTIVE';
     }
 
-    private function emptySummary(array $record): array
-    {
-        $barangayId = (int) $record['barangay_id'];
-
-        return [
-            'barangay_id' => $barangayId,
-            'barangay_name' => (string) $record['barangay_name'],
-            'barangay_status' => $barangayId === 0 ? 'UNASSIGNED' : 'UNKNOWN',
-            'active' => 0,
-            'inactive' => 0,
-            'total' => 0,
-        ];
-    }
-
     private function calculateTotals(array $summaryRows): array
     {
         return array_reduce($summaryRows, function (array $carry, array $row) {
@@ -221,57 +261,96 @@ class VoterReportController extends Controller
         }, ['active' => 0, 'inactive' => 0, 'total' => 0]);
     }
 
-    private function hasUnassignedVoters(): bool
+    private function applyStatusFilter($query, string $status): void
     {
+        if ($status === 'ALL') {
+            return;
+        }
+
+        $active = ['ACTIVE', 'VERIFIED', 'PENDING'];
+        if ($status === 'ACTIVE') {
+            $query->whereIn('voters.status', $active);
+            return;
+        }
+
+        $query->where(function ($inner) use ($active) {
+            $inner->whereNull('voters.status')
+                ->orWhereNotIn('voters.status', $active);
+        });
+    }
+
+    private function applySearchFilter($query, string $search): void
+    {
+        if ($search === '') {
+            return;
+        }
+
+        $like = '%' . mb_strtolower($search) . '%';
+        $query->where(function ($inner) use ($like) {
+            $inner->whereRaw(
+                'LOWER(CONCAT_WS(\' \', voters.first_name, voters.middle_name, voters.last_name, voters.extension)) LIKE ?',
+                [$like]
+            )
+                ->orWhereRaw('LOWER(COALESCE(voters.voters_id_number, \'\')) LIKE ?', [$like])
+                ->orWhereRaw('LOWER(COALESCE(puroks.purok_name, \'Unassigned\')) LIKE ?', [$like])
+                ->orWhereRaw('LOWER(COALESCE(voters.precinct_no, \'Unassigned\')) LIKE ?', [$like])
+                ->orWhereRaw('LOWER(COALESCE(voters.status, \'\')) LIKE ?', [$like]);
+        });
+    }
+
+    private function applyReportOrdering($query): void
+    {
+        $query
+            ->orderByRaw('CASE WHEN puroks.purok_name IS NULL OR TRIM(puroks.purok_name) = \'\' THEN 1 ELSE 0 END')
+            ->orderBy('puroks.purok_name')
+            ->orderByRaw('CASE WHEN voters.precinct_no IS NULL OR TRIM(voters.precinct_no) = \'\' THEN 1 ELSE 0 END')
+            ->orderBy('voters.precinct_no')
+            ->orderBy('voters.last_name')
+            ->orderBy('voters.first_name')
+            ->orderBy('voters.recipient_id');
+    }
+
+    public function records(Request $request)
+    {
+        $validated = $request->validate([
+            'barangay_id' => ['required', 'integer', 'min:0'],
+            'status' => ['nullable', Rule::in(['ALL', 'ACTIVE', 'INACTIVE'])],
+            'search' => ['nullable', 'string', 'max:120'],
+            'page' => ['nullable', 'integer', 'min:1'],
+            'per_page' => ['nullable', 'integer', 'min:10', 'max:500'],
+        ]);
+
+        $barangayId = (int) $validated['barangay_id'];
+        $status = strtoupper((string) ($validated['status'] ?? 'ALL'));
+        $search = trim((string) ($validated['search'] ?? ''));
+        $page = (int) ($validated['page'] ?? 1);
+        $perPage = (int) ($validated['per_page'] ?? 10);
         $query = $this->reportQuery();
-        $this->applyBarangayFilter($query, 0);
+        $this->applyBarangayFilter($query, $barangayId);
+        $this->applyStatusFilter($query, $status);
+        $this->applySearchFilter($query, $search);
+        $this->applyReportOrdering($query);
+        $paginator = $query->paginate($perPage, ['*'], 'page', $page);
+        $offset = ($paginator->currentPage() - 1) * $paginator->perPage();
+        $records = $paginator->getCollection()->values()
+            ->map(function ($record, int $index) use ($offset) {
+                $row = $this->serializeRecord($record);
+                $row['report_no'] = $offset + $index + 1;
+                return $row;
+            })->all();
 
-        return $query->exists();
-    }
-
-    private function compareSummaries(array $left, array $right): int
-    {
-        if ($left['barangay_id'] === 0 || $right['barangay_id'] === 0) {
-            if ($left['barangay_id'] === $right['barangay_id']) {
-                return 0;
-            }
-
-            return $left['barangay_id'] === 0 ? 1 : -1;
-        }
-
-        return strnatcasecmp($left['barangay_name'], $right['barangay_name']);
-    }
-
-    private function compareRecords(array $left, array $right): int
-    {
-        foreach (['barangay_name', 'purok_name', 'precinct_no'] as $field) {
-            $comparison = $this->compareLabels($left[$field], $right[$field]);
-            if ($comparison !== 0) {
-                return $comparison;
-            }
-        }
-
-        $nameComparison = strnatcasecmp($left['full_name'], $right['full_name']);
-        if ($nameComparison !== 0) {
-            return $nameComparison;
-        }
-
-        return $left['recipient_id'] <=> $right['recipient_id'];
-    }
-
-    private function compareLabels(string $left, string $right): int
-    {
-        $leftUnassigned = strcasecmp($left, 'Unassigned') === 0;
-        $rightUnassigned = strcasecmp($right, 'Unassigned') === 0;
-
-        if ($leftUnassigned || $rightUnassigned) {
-            if ($leftUnassigned && $rightUnassigned) {
-                return 0;
-            }
-
-            return $leftUnassigned ? 1 : -1;
-        }
-
-        return strnatcasecmp($left, $right);
+        return response()->json([
+            'success' => true,
+            'generated_at' => now()->toIso8601String(),
+            'records' => $records,
+            'pagination' => [
+                'current_page' => $paginator->currentPage(),
+                'per_page' => $paginator->perPage(),
+                'total' => $paginator->total(),
+                'last_page' => $paginator->lastPage(),
+                'from' => $paginator->firstItem(),
+                'to' => $paginator->lastItem(),
+            ],
+        ]);
     }
 }
