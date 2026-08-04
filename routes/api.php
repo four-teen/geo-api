@@ -4,8 +4,10 @@ use App\Http\Controllers\Api\Admin\AdminController;
 use App\Http\Controllers\Api\Admin\AccountManagementController;
 use App\Http\Controllers\Api\Bow\BarangayController;
 use App\Http\Controllers\Api\Bow\DashboardStatsController;
+use App\Http\Controllers\Api\Bow\HouseholdController;
 use App\Http\Controllers\Api\Bow\PrecinctController;
 use App\Http\Controllers\Api\Bow\PurokController;
+use App\Http\Controllers\Api\Bow\PurokVoterReportController;
 use App\Http\Controllers\Api\Bow\RecipientController;
 use App\Http\Controllers\Api\Bow\ReligionController;
 use App\Http\Controllers\Api\Bow\TribeController;
@@ -34,6 +36,7 @@ Route::middleware(['auth:sanctum', 'active', 'role:administrator'])->group(funct
     Route::patch('admin/accounts/{id}', [AccountManagementController::class, 'update'])->whereNumber('id');
     Route::delete('admin/accounts/{id}', [AccountManagementController::class, 'destroy'])->whereNumber('id');
     Route::get('bow/reports/voters/records', [VoterReportController::class, 'records']);
+    Route::get('bow/reports/voters/puroks', [PurokVoterReportController::class, 'index']);
     Route::get('bow/reports/voters', [VoterReportController::class, 'index']);
 });
 
@@ -49,6 +52,7 @@ Route::middleware(['auth:sanctum', 'active'])->group(function () {
         Route::get('bow/tribes', [TribeController::class, 'index']);
         Route::get('bow/recipients', [RecipientController::class, 'index']);
         Route::get('bow/voters', [RecipientController::class, 'index']);
+        Route::get('bow/voters/{id}/household', [HouseholdController::class, 'show'])->whereNumber('id');
     });
 
     Route::middleware('permission:bow.manage_geo')->group(function () {
@@ -98,6 +102,7 @@ Route::middleware(['auth:sanctum', 'active'])->group(function () {
 
         Route::put('bow/voters/{id}', [RecipientController::class, 'update'])->whereNumber('id');
         Route::patch('bow/voters/{id}', [RecipientController::class, 'update'])->whereNumber('id');
+        Route::put('bow/voters/{id}/household', [HouseholdController::class, 'update'])->whereNumber('id');
     });
 
     Route::middleware(['permission:bow.manage_geo', 'can_delete'])->group(function () {

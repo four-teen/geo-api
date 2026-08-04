@@ -302,7 +302,11 @@ class RecipientController extends Controller
         $this->ensureRecipientAccess($request, $recipient);
 
         $oldPicturePath = (string) ($recipient->profile_picture ?? '');
-        $recipient->delete();
+
+        DB::transaction(function () use ($recipient) {
+            $this->detachRecipientFromHousehold((int) $recipient->recipient_id);
+            $recipient->delete();
+        }, 3);
 
         if ($oldPicturePath !== '') {
             $this->removeProfilePictureFile($oldPicturePath);
@@ -488,6 +492,40 @@ class RecipientController extends Controller
             ->value('max_id');
 
         return ((int) $maxId) + 1;
+    }
+
+    private function detachRecipientFromHousehold(int $recipientId): void
+    {
+        $householdId = DB::table('bow_tbl_household_members')
+            ->where('recipient_id', $recipientId)
+            ->value('household_id');
+
+        if (!$householdId) {
+            return;
+        }
+
+        $household = DB::table('bow_tbl_households')->where('household_id', $householdId)->first();
+        DB::table('bow_tbl_household_members')->where('recipient_id', $recipientId)->delete();
+        $remainingMemberId = DB::table('bow_tbl_household_members')
+            ->where('household_id', $householdId)
+            ->orderBy('household_member_id')
+            ->value('recipient_id');
+
+        if (!$remainingMemberId) {
+            DB::table('bow_tbl_households')->where('household_id', $householdId)->delete();
+            return;
+        }
+
+        if ($household && (int) $household->household_head_recipient_id === $recipientId) {
+            DB::table('bow_tbl_households')->where('household_id', $householdId)->update([
+                'household_head_recipient_id' => $remainingMemberId,
+                'updated_at' => now(),
+            ]);
+            DB::table('bow_tbl_household_members')
+                ->where('household_id', $householdId)
+                ->where('recipient_id', $remainingMemberId)
+                ->update(['relationship_to_head' => 'Household head', 'updated_at' => now()]);
+        }
     }
 
     private function recipientListQuery(): Builder
