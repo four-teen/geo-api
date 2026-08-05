@@ -181,6 +181,11 @@ class RecipientController extends Controller
             'tribe_id' => ['nullable', 'integer', 'min:1', 'exists:bow_tbl_tribes,tribe_id'],
             'sex' => ['nullable', 'string', 'max:20'],
             'profile_picture' => ['nullable', 'image', 'max:3072'],
+            'house_picture' => ['nullable', 'image', 'max:3072'],
+            'latitude' => ['nullable', 'required_with:longitude,location_accuracy_meters,location_captured_at', 'numeric', 'between:-90,90'],
+            'longitude' => ['nullable', 'required_with:latitude,location_accuracy_meters,location_captured_at', 'numeric', 'between:-180,180'],
+            'location_accuracy_meters' => ['nullable', 'numeric', 'min:0', 'max:1000000'],
+            'location_captured_at' => ['nullable', 'date'],
             'status' => ['nullable', 'string', 'max:50'],
         ]);
 
@@ -204,10 +209,19 @@ class RecipientController extends Controller
             'sex' => $validated['sex'] ?? null,
             'status' => $this->normalizeVoterStatus($validated['status'] ?? 'ACTIVE'),
             'profile_picture' => null,
+            'house_picture' => null,
+            'latitude' => $validated['latitude'] ?? null,
+            'longitude' => $validated['longitude'] ?? null,
+            'location_accuracy_meters' => $validated['location_accuracy_meters'] ?? null,
+            'location_captured_at' => $validated['location_captured_at'] ?? null,
         ];
 
         if ($request->hasFile('profile_picture')) {
             $payload['profile_picture'] = $this->storeProfilePicture($request->file('profile_picture'));
+        }
+
+        if ($request->hasFile('house_picture')) {
+            $payload['house_picture'] = $this->storeHousePicture($request->file('house_picture'));
         }
 
         $recipient = null;
@@ -248,6 +262,13 @@ class RecipientController extends Controller
             'sex' => ['nullable', 'string', 'max:20'],
             'profile_picture' => ['nullable', 'image', 'max:3072'],
             'remove_profile_picture' => ['nullable', 'boolean'],
+            'house_picture' => ['nullable', 'image', 'max:3072'],
+            'remove_house_picture' => ['nullable', 'boolean'],
+            'latitude' => ['nullable', 'required_with:longitude,location_accuracy_meters,location_captured_at', 'numeric', 'between:-90,90'],
+            'longitude' => ['nullable', 'required_with:latitude,location_accuracy_meters,location_captured_at', 'numeric', 'between:-180,180'],
+            'location_accuracy_meters' => ['nullable', 'numeric', 'min:0', 'max:1000000'],
+            'location_captured_at' => ['nullable', 'date'],
+            'remove_location' => ['nullable', 'boolean'],
             'status' => ['nullable', 'string', 'max:50'],
         ]);
 
@@ -272,6 +293,18 @@ class RecipientController extends Controller
             'status' => $this->normalizeVoterStatus($validated['status'] ?? (string) $recipient->status),
         ];
 
+        if ((bool) ($validated['remove_location'] ?? false)) {
+            $payload['latitude'] = null;
+            $payload['longitude'] = null;
+            $payload['location_accuracy_meters'] = null;
+            $payload['location_captured_at'] = null;
+        } elseif (array_key_exists('latitude', $validated) && array_key_exists('longitude', $validated)) {
+            $payload['latitude'] = $validated['latitude'];
+            $payload['longitude'] = $validated['longitude'];
+            $payload['location_accuracy_meters'] = $validated['location_accuracy_meters'] ?? null;
+            $payload['location_captured_at'] = $validated['location_captured_at'] ?? null;
+        }
+
         $removeOldPicture = false;
         if ($request->hasFile('profile_picture')) {
             $payload['profile_picture'] = $this->storeProfilePicture($request->file('profile_picture'));
@@ -281,12 +314,26 @@ class RecipientController extends Controller
             $removeOldPicture = true;
         }
 
+        $removeOldHousePicture = false;
+        if ($request->hasFile('house_picture')) {
+            $payload['house_picture'] = $this->storeHousePicture($request->file('house_picture'));
+            $removeOldHousePicture = true;
+        } elseif ((bool) ($validated['remove_house_picture'] ?? false)) {
+            $payload['house_picture'] = null;
+            $removeOldHousePicture = true;
+        }
+
         $oldPicturePath = (string) ($recipient->profile_picture ?? '');
+        $oldHousePicturePath = (string) ($recipient->house_picture ?? '');
 
         $recipient->update($payload);
 
         if ($removeOldPicture && $oldPicturePath !== '') {
-            $this->removeProfilePictureFile($oldPicturePath);
+            $this->removeRecipientImageFile($oldPicturePath);
+        }
+
+        if ($removeOldHousePicture && $oldHousePicturePath !== '') {
+            $this->removeRecipientImageFile($oldHousePicturePath);
         }
 
         return response()->json([
@@ -302,6 +349,7 @@ class RecipientController extends Controller
         $this->ensureRecipientAccess($request, $recipient);
 
         $oldPicturePath = (string) ($recipient->profile_picture ?? '');
+        $oldHousePicturePath = (string) ($recipient->house_picture ?? '');
 
         DB::transaction(function () use ($recipient) {
             $this->detachRecipientFromHousehold((int) $recipient->recipient_id);
@@ -309,7 +357,11 @@ class RecipientController extends Controller
         }, 3);
 
         if ($oldPicturePath !== '') {
-            $this->removeProfilePictureFile($oldPicturePath);
+            $this->removeRecipientImageFile($oldPicturePath);
+        }
+
+        if ($oldHousePicturePath !== '') {
+            $this->removeRecipientImageFile($oldHousePicturePath);
         }
 
         return response()->json([
@@ -436,6 +488,7 @@ class RecipientController extends Controller
             'is_unassigned' => $barangayId === null,
             'full_name' => $fullName,
             'profile_picture_url' => $this->resolveProfilePictureUrl($recipient->profile_picture),
+            'house_picture_url' => $this->resolveProfilePictureUrl($recipient->house_picture),
         ]);
     }
 
@@ -455,19 +508,30 @@ class RecipientController extends Controller
 
     private function storeProfilePicture(UploadedFile $file): string
     {
-        $directory = public_path('uploads/recipients');
+        return $this->storeRecipientImage($file, 'uploads/recipients');
+    }
+
+    private function storeHousePicture(UploadedFile $file): string
+    {
+        return $this->storeRecipientImage($file, 'uploads/recipients/houses');
+    }
+
+    private function storeRecipientImage(UploadedFile $file, string $relativeDirectory): string
+    {
+        $relativeDirectory = trim($relativeDirectory, '/');
+        $directory = public_path($relativeDirectory);
         if (!is_dir($directory) && !mkdir($directory, 0755, true) && !is_dir($directory)) {
-            throw new \RuntimeException('Failed to create recipients upload directory.');
+            throw new \RuntimeException('Failed to create recipient image upload directory.');
         }
 
         $extension = $file->guessExtension() ?: ($file->getClientOriginalExtension() ?: 'jpg');
         $fileName = Str::uuid()->toString() . '.' . strtolower($extension);
         $file->move($directory, $fileName);
 
-        return 'uploads/recipients/' . $fileName;
+        return $relativeDirectory . '/' . $fileName;
     }
 
-    private function removeProfilePictureFile(?string $path): void
+    private function removeRecipientImageFile(?string $path): void
     {
         $normalized = trim((string) $path);
         if ($normalized === '') {

@@ -36,6 +36,11 @@ class BowRecipient extends Model
         'tribe_id',
         'sex',
         'profile_picture',
+        'house_picture',
+        'latitude',
+        'longitude',
+        'location_accuracy_meters',
+        'location_captured_at',
         'status',
     ];
 
@@ -47,6 +52,10 @@ class BowRecipient extends Model
         'precinct_id' => 'integer',
         'source_record_no' => 'integer',
         'import_id' => 'integer',
+        'latitude' => 'float',
+        'longitude' => 'float',
+        'location_accuracy_meters' => 'float',
+        'location_captured_at' => 'datetime',
     ];
 
     public function barangayRecord(): BelongsTo
