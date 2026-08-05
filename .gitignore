@@ -128,3 +128,6 @@ dist
 .yarn/build-state.yml
 .yarn/install-state.gz
 .pnp.*
+
+# Runtime voter residence photos
+/public/uploads/recipients/houses/
