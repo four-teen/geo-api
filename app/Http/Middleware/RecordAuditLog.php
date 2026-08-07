@@ -70,6 +70,11 @@ class RecordAuditLog
         'physician' => ['physician_id', 'id'],
         'medicine' => ['medicine_id', 'id'],
         'prescription' => ['prescription_id', 'id'],
+        'voters' => ['recipient_id', 'id'],
+        'recipients' => ['recipient_id', 'id'],
+        'precinct' => ['precinct_id', 'id'],
+        'tribes' => ['tribe_id', 'id'],
+        'religions' => ['religion_id', 'id'],
     ];
 
     private const PRIMARY_KEYS = [
@@ -80,6 +85,21 @@ class RecordAuditLog
         'bow_tbl_physicians' => 'physician_id',
         'bow_tbl_medicines' => 'medicine_id',
         'bow_tbl_prescriptions' => 'prescription_id',
+        'bow_tbl_recipients' => 'recipient_id',
+        'bow_tbl_precincts' => 'precinct_id',
+        'bow_tbl_tribes' => 'tribe_id',
+        'bow_tbl_religions' => 'religion_id',
+    ];
+
+    private const PRIVATE_RESOURCE_DETAILS = ['voters', 'recipients', 'household'];
+    private const STAFF_ROLES = ['staff', 'voter_editor'];
+    private const STAFF_PAGE_PATHS = [
+        '/staff/dashboard',
+        '/voters',
+        '/recipients',
+        '/barangays',
+        '/tribes',
+        '/religions',
     ];
 
     private static ?bool $logTableExists = null;
@@ -108,6 +128,10 @@ class RecordAuditLog
         float $startedAt,
         ?array $beforeSnapshot = null
     ): void {
+        if ($request->is('api/staff/activity') || $request->is('staff/activity')) {
+            return;
+        }
+
         if (!$this->hasLogTable()) {
             return;
         }
@@ -143,6 +167,14 @@ class RecordAuditLog
             'last_event_group' => $eventGroup,
         ];
 
+        $apiRequestPath = '/' . trim($request->path(), '/');
+        $isStaffActor = in_array(strtolower((string) $role), self::STAFF_ROLES, true);
+        $frontendPagePath = $isStaffActor ? $this->resolveFrontendPagePath($request) : null;
+        if ($frontendPagePath !== null) {
+            $extraData['api_path'] = $apiRequestPath;
+            $extraData['page_path'] = $frontendPagePath;
+        }
+
         if (!empty($responseMessage)) {
             $extraData['response_message'] = $responseMessage;
         }
@@ -161,12 +193,14 @@ class RecordAuditLog
             $responseData,
             $responseMessage,
             is_array($oldValues) ? $oldValues : null,
-            $entityId
+            $entityId,
+            $role
         );
 
         if (
             !empty($summary) &&
             $userId !== null &&
+            !$isStaffActor &&
             $this->shouldSummarizeIntoSession($request, $eventCode, $actionStatus)
         ) {
             $sessionKey = $this->resolveSessionKey($request, $responseData, $eventCode, $actionStatus);
@@ -193,6 +227,14 @@ class RecordAuditLog
             return;
         }
 
+        if ($isStaffActor) {
+            $oldValues = null;
+            $newValues = null;
+        }
+
+        $loggedRequestPath = $frontendPagePath
+            ?? ($eventCode === 'LOGIN' ? '/' : $apiRequestPath);
+
         $description = $summary ?: (strtoupper($request->method()) . ' /' . trim($request->path(), '/'));
         if ($actionStatus === 'FAILED' && !empty($responseMessage)) {
             $description .= ' (' . $responseMessage . ')';
@@ -210,7 +252,7 @@ class RecordAuditLog
                 'entity_id' => $entityId ? mb_substr((string) $entityId, 0, 64) : null,
                 'description' => mb_substr($description, 0, self::MAX_DESCRIPTION_LENGTH),
                 'request_method' => mb_substr(strtoupper($request->method()), 0, 10),
-                'request_path' => mb_substr('/' . trim($request->path(), '/'), 0, 255),
+                'request_path' => mb_substr($loggedRequestPath, 0, 255),
                 'request_query' => empty($queryData) ? null : $this->encodeJson($queryData),
                 'ip_address' => $request->ip(),
                 'user_agent' => mb_substr((string) $request->userAgent(), 0, 500),
@@ -389,7 +431,8 @@ class RecordAuditLog
         array $responseData,
         ?string $responseMessage,
         ?array $oldValues,
-        ?string $entityId
+        ?string $entityId,
+        ?string $role
     ): ?string {
         if (!$this->shouldSummarizeIntoSession($request, $eventCode, $actionStatus)) {
             return null;
@@ -410,16 +453,17 @@ class RecordAuditLog
         $resolvedEntityId = $entityId ?: $this->pickEntityIdFromResponse($responseData, $resourceName);
         $entityRef = $this->buildEntityReference($resourceName, $resolvedEntityId);
         $method = strtoupper($request->method());
+        $isStaffActor = in_array(strtolower((string) $role), self::STAFF_ROLES, true);
 
         $summary = null;
         if ($method === 'POST') {
-            $details = $this->summarizeAddedValues($resourceName, $requestData);
+            $details = $isStaffActor ? '' : $this->summarizeAddedValues($resourceName, $requestData);
             $summary = 'add ' . $entityRef;
             if ($details !== '') {
                 $summary .= ' [' . $details . ']';
             }
         } elseif (in_array($method, ['PUT', 'PATCH'], true)) {
-            $details = $this->summarizeChangedValues($resourceName, $requestData, $oldValues);
+            $details = $isStaffActor ? '' : $this->summarizeChangedValues($resourceName, $requestData, $oldValues);
             $summary = $eventCode === 'RELEASE_PRESCRIPTION'
                 ? 'release ' . $entityRef
                 : 'update ' . $entityRef;
@@ -428,7 +472,7 @@ class RecordAuditLog
                 $summary .= ' [' . $details . ']';
             }
         } elseif ($method === 'DELETE') {
-            $details = $this->summarizeDeleteValues($resourceName, $oldValues);
+            $details = $isStaffActor ? '' : $this->summarizeDeleteValues($resourceName, $oldValues);
             $summary = 'delete ' . $entityRef;
             if ($details !== '') {
                 $summary .= ' [' . $details . ']';
@@ -559,6 +603,12 @@ class RecordAuditLog
             'physician' => 'bow_tbl_physicians',
             'medicine' => 'bow_tbl_medicines',
             'prescription' => 'bow_tbl_prescriptions',
+            'voters' => 'bow_tbl_recipients',
+            'recipients' => 'bow_tbl_recipients',
+            'household' => 'bow_tbl_recipients',
+            'precinct' => 'bow_tbl_precincts',
+            'tribes' => 'bow_tbl_tribes',
+            'religions' => 'bow_tbl_religions',
         ];
 
         return $map[strtolower($resourceName)] ?? null;
@@ -619,6 +669,10 @@ class RecordAuditLog
             'physician_id',
             'barangay_id',
             'purok_id',
+            'recipient_id',
+            'precinct_id',
+            'tribe_id',
+            'religion_id',
         ];
 
         foreach (array_values(array_unique(array_merge($candidates, $generic))) as $key) {
@@ -713,6 +767,10 @@ class RecordAuditLog
     private function extractImportantFields(string $resourceName, array $data): array
     {
         $resource = strtolower($resourceName);
+        if (in_array($resource, self::PRIVATE_RESOURCE_DETAILS, true)) {
+            return [];
+        }
+
         $allowedKeys = self::RESOURCE_KEYS[$resource] ?? [];
         $fields = [];
 
@@ -785,6 +843,10 @@ class RecordAuditLog
             'barangays' => 'barangay',
             'puroks' => 'purok',
             'prescriptions' => 'prescription',
+            'voters' => 'voter',
+            'recipients' => 'voter',
+            'tribes' => 'tribe',
+            'religions' => 'religion',
         ];
 
         return $map[$normalized] ?? $normalized;
@@ -1011,6 +1073,24 @@ class RecordAuditLog
         $responseData = $this->extractResponseData($response);
         $dataBlock = is_array($responseData['data'] ?? null) ? $responseData['data'] : [];
 
+        if (empty($dataBlock['role']) && Schema::hasTable('users')) {
+            $identifier = trim((string) ($request->input('username') ?: $request->input('email')));
+            if ($identifier !== '') {
+                $knownUser = DB::table('users')
+                    ->where('username', $identifier)
+                    ->orWhere('email', $identifier)
+                    ->first();
+
+                if ($knownUser) {
+                    return [
+                        data_get($knownUser, 'id'),
+                        data_get($knownUser, 'username') ?: data_get($knownUser, 'name') ?: data_get($knownUser, 'email'),
+                        data_get($knownUser, 'role'),
+                    ];
+                }
+            }
+        }
+
         return [
             $dataBlock['id'] ?? null,
             $dataBlock['username'] ?? $request->input('username') ?? $request->input('email'),
@@ -1072,5 +1152,25 @@ class RecordAuditLog
         }
 
         return $data;
+    }
+
+    private function resolveFrontendPagePath(Request $request): ?string
+    {
+        $rawPath = trim((string) $request->header('X-Page-Path'));
+        if ($rawPath === '') {
+            return null;
+        }
+
+        $path = parse_url($rawPath, PHP_URL_PATH);
+        if (!is_string($path) || $path === '') {
+            return null;
+        }
+
+        $normalized = '/' . trim($path, '/');
+        $normalized = $normalized === '/' ? '/' : rtrim($normalized, '/');
+
+        return in_array($normalized, self::STAFF_PAGE_PATHS, true)
+            ? mb_substr($normalized, 0, 255)
+            : null;
     }
 }
