@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Api\Admin\AdminController;
 use App\Http\Controllers\Api\Admin\AccountManagementController;
+use App\Http\Controllers\Api\Admin\AuditLogController;
 use App\Http\Controllers\Api\Bow\BarangayController;
 use App\Http\Controllers\Api\Bow\DashboardStatsController;
 use App\Http\Controllers\Api\Bow\HouseholdController;
@@ -13,6 +14,7 @@ use App\Http\Controllers\Api\Bow\ReligionController;
 use App\Http\Controllers\Api\Bow\TribeController;
 use App\Http\Controllers\Api\Bow\VoterImportController;
 use App\Http\Controllers\Api\Bow\VoterReportController;
+use App\Http\Controllers\Api\Staff\ActivityController;
 use Illuminate\Support\Facades\Route;
 
 Route::controller(AdminController::class)->group(function () {
@@ -28,6 +30,7 @@ Route::middleware(['auth:sanctum', 'active'])->controller(AdminController::class
 });
 
 Route::middleware(['auth:sanctum', 'active', 'role:administrator'])->group(function () {
+    Route::get('admin/activity-logs', [AuditLogController::class, 'index']);
     Route::get('admin/accounts/options', [AccountManagementController::class, 'options']);
     Route::get('admin/accounts', [AccountManagementController::class, 'index']);
     Route::get('admin/accounts/{id}', [AccountManagementController::class, 'show'])->whereNumber('id');
@@ -41,6 +44,8 @@ Route::middleware(['auth:sanctum', 'active', 'role:administrator'])->group(funct
 });
 
 Route::middleware(['auth:sanctum', 'active'])->group(function () {
+    Route::post('staff/activity', [ActivityController::class, 'store']);
+
     Route::middleware('permission:bow.manage_geo,bow.edit_geo,bow.view_geo')->group(function () {
         Route::get('bow/dashboard/voter-insights', [DashboardStatsController::class, 'voterInsights']);
         Route::get('bow/barangay', [BarangayController::class, 'index']);

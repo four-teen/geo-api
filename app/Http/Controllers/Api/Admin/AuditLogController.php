@@ -13,6 +13,16 @@ class AuditLogController extends BaseController
     private const LOG_TABLE = 'bow_tbl_account_logs';
     private const DEFAULT_PER_PAGE = 20;
     private const MAX_PER_PAGE = 100;
+    private const STAFF_ROLES = ['staff', 'voter_editor'];
+    private const PAGE_OPTIONS = [
+        ['value' => '/', 'label' => 'Login'],
+        ['value' => '/staff/dashboard', 'label' => 'Staff Dashboard'],
+        ['value' => '/voters', 'label' => 'Voter Masterlist'],
+        ['value' => '/recipients', 'label' => 'Voter Masterlist (legacy route)'],
+        ['value' => '/barangays', 'label' => 'Locations & Precincts'],
+        ['value' => '/tribes', 'label' => 'Tribes'],
+        ['value' => '/religions', 'label' => 'Religions'],
+    ];
 
     private ?array $logColumnMap = null;
 
@@ -22,8 +32,12 @@ class AuditLogController extends BaseController
             'date_from' => ['nullable', 'date_format:Y-m-d'],
             'date_to' => ['nullable', 'date_format:Y-m-d', 'after_or_equal:date_from'],
             'user_id' => ['nullable', 'integer'],
+            'role' => ['nullable', 'in:staff,voter_editor'],
+            'event_type' => ['nullable', 'in:LOGIN,LOGOUT,PAGE_VIEW,ACTION'],
             'event_code' => ['nullable', 'string', 'max:80'],
+            'page_path' => ['nullable', 'string', 'max:255'],
             'status' => ['nullable', 'string', 'max:20'],
+            'search' => ['nullable', 'string', 'max:100'],
             'page' => ['nullable', 'integer', 'min:1'],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:' . self::MAX_PER_PAGE],
         ]);
@@ -36,8 +50,12 @@ class AuditLogController extends BaseController
             'date_from' => $validated['date_from'] ?? null,
             'date_to' => $validated['date_to'] ?? null,
             'user_id' => isset($validated['user_id']) ? (int) $validated['user_id'] : null,
+            'role' => $validated['role'] ?? null,
+            'event_type' => $validated['event_type'] ?? null,
             'event_code' => $validated['event_code'] ?? null,
+            'page_path' => $validated['page_path'] ?? null,
             'status' => $validated['status'] ?? null,
+            'search' => $validated['search'] ?? null,
         ];
 
         if (!Schema::hasTable(self::LOG_TABLE)) {
@@ -45,6 +63,14 @@ class AuditLogController extends BaseController
                 'success' => true,
                 'data' => [
                     'items' => [],
+                    'summary' => [
+                        'total' => 0,
+                        'successful' => 0,
+                        'failed' => 0,
+                        'logins' => 0,
+                        'page_views' => 0,
+                        'actions' => 0,
+                    ],
                     'pagination' => [
                         'current_page' => $page,
                         'per_page' => $perPage,
@@ -54,6 +80,9 @@ class AuditLogController extends BaseController
                     'filters' => [
                         'applied' => $appliedFilters,
                         'users' => $this->resolveUsers(),
+                        'roles' => $this->resolveRoleOptions(),
+                        'event_types' => $this->resolveEventTypeOptions(),
+                        'pages' => self::PAGE_OPTIONS,
                         'events' => [],
                         'statuses' => [],
                     ],
@@ -63,6 +92,10 @@ class AuditLogController extends BaseController
 
         $query = DB::table(self::LOG_TABLE . ' as l');
         $query->select($this->resolveSelectColumns());
+
+        if ($this->hasLogColumn('role')) {
+            $query->whereIn('l.role', self::STAFF_ROLES);
+        }
 
         if ($this->hasLogColumn('created_at')) {
             if (!empty($validated['date_from'])) {
@@ -78,6 +111,14 @@ class AuditLogController extends BaseController
             $query->where('l.user_id', (int) $validated['user_id']);
         }
 
+        if ($this->hasLogColumn('role') && !empty($validated['role'])) {
+            $query->where('l.role', $validated['role']);
+        }
+
+        if ($this->hasLogColumn('event_code') && !empty($validated['event_type'])) {
+            $this->applyEventTypeFilter($query, (string) $validated['event_type']);
+        }
+
         if ($this->hasLogColumn('event_code') && !empty($validated['event_code'])) {
             $query->where('l.event_code', $validated['event_code']);
         }
@@ -85,6 +126,29 @@ class AuditLogController extends BaseController
         if ($this->hasLogColumn('action_status') && !empty($validated['status'])) {
             $query->where('l.action_status', strtoupper((string) $validated['status']));
         }
+
+        if ($this->hasLogColumn('request_path') && !empty($validated['page_path'])) {
+            $query->where('l.request_path', $validated['page_path']);
+        }
+
+        if (!empty($validated['search'])) {
+            $search = trim((string) $validated['search']);
+            $query->where(function ($inner) use ($search) {
+                foreach (['username', 'description', 'entity_id', 'request_path'] as $column) {
+                    if (!$this->hasLogColumn($column)) {
+                        continue;
+                    }
+
+                    if ($column === 'username') {
+                        $inner->where('l.' . $column, 'like', '%' . $search . '%');
+                    } else {
+                        $inner->orWhere('l.' . $column, 'like', '%' . $search . '%');
+                    }
+                }
+            });
+        }
+
+        $summary = $this->resolveSummary($query);
 
         if ($this->hasLogColumn('created_at')) {
             $query->orderByDesc('l.created_at');
@@ -99,7 +163,11 @@ class AuditLogController extends BaseController
         return response()->json([
             'success' => true,
             'data' => [
-                'items' => $paginator->items(),
+                'items' => collect($paginator->items())
+                    ->map(fn ($item) => $this->formatLogItem($item))
+                    ->values()
+                    ->all(),
+                'summary' => $summary,
                 'pagination' => [
                     'current_page' => $paginator->currentPage(),
                     'per_page' => $paginator->perPage(),
@@ -109,6 +177,9 @@ class AuditLogController extends BaseController
                 'filters' => [
                     'applied' => $appliedFilters,
                     'users' => $this->resolveUsers(),
+                    'roles' => $this->resolveRoleOptions(),
+                    'event_types' => $this->resolveEventTypeOptions(),
+                    'pages' => self::PAGE_OPTIONS,
                     'events' => $this->resolveEventOptions(),
                     'statuses' => $this->resolveStatusOptions(),
                 ],
@@ -157,6 +228,10 @@ class AuditLogController extends BaseController
         $hasEmail = Schema::hasColumn('users', 'email');
 
         $query = DB::table('users')->select('id');
+
+        if (Schema::hasColumn('users', 'role')) {
+            $query->whereIn('role', self::STAFF_ROLES);
+        }
 
         if ($hasName) {
             $query->addSelect('name');
@@ -232,27 +307,104 @@ class AuditLogController extends BaseController
 
     private function resolveStatusOptions(): array
     {
-        if (!$this->hasLogColumn('action_status')) {
-            return [];
+        return [
+            ['value' => 'SUCCESS', 'label' => 'Success'],
+            ['value' => 'FAILED', 'label' => 'Failed'],
+        ];
+    }
+
+    private function applyEventTypeFilter($query, string $eventType): void
+    {
+        if ($eventType === 'ACTION') {
+            $query->whereNotIn('l.event_code', ['LOGIN', 'LOGOUT', 'PAGE_VIEW']);
+            return;
         }
 
-        return DB::table(self::LOG_TABLE . ' as l')
-            ->whereNotNull('l.action_status')
-            ->where('l.action_status', '<>', '')
-            ->select('l.action_status')
-            ->distinct()
-            ->orderBy('l.action_status')
-            ->get()
-            ->map(function ($row) {
-                $status = strtoupper((string) $row->action_status);
+        $query->where('l.event_code', $eventType);
+    }
 
-                return [
-                    'value' => $status,
-                    'label' => $status,
-                ];
-            })
-            ->values()
-            ->all();
+    private function resolveSummary($query): array
+    {
+        $count = fn ($builder) => (int) $builder->count();
+
+        $total = $count(clone $query);
+        $successful = $this->hasLogColumn('action_status')
+            ? $count((clone $query)->where('l.action_status', 'SUCCESS'))
+            : $total;
+        $failed = $this->hasLogColumn('action_status')
+            ? $count((clone $query)->where('l.action_status', 'FAILED'))
+            : 0;
+        $logins = $this->hasLogColumn('event_code')
+            ? $count((clone $query)->where('l.event_code', 'LOGIN'))
+            : 0;
+        $pageViews = $this->hasLogColumn('event_code')
+            ? $count((clone $query)->where('l.event_code', 'PAGE_VIEW'))
+            : 0;
+        $actions = $this->hasLogColumn('event_code')
+            ? $count((clone $query)->whereNotIn('l.event_code', ['LOGIN', 'LOGOUT', 'PAGE_VIEW']))
+            : 0;
+
+        return [
+            'total' => $total,
+            'successful' => $successful,
+            'failed' => $failed,
+            'logins' => $logins,
+            'page_views' => $pageViews,
+            'actions' => $actions,
+        ];
+    }
+
+    private function formatLogItem(object $item): array
+    {
+        $formatted = (array) $item;
+        $eventCode = strtoupper((string) ($formatted['event_code'] ?? 'ACTION'));
+
+        $formatted['event_type'] = in_array($eventCode, ['LOGIN', 'LOGOUT', 'PAGE_VIEW'], true)
+            ? $eventCode
+            : 'ACTION';
+        $formatted['page_name'] = $this->resolvePageLabel((string) ($formatted['request_path'] ?? ''));
+        $formatted['role_label'] = ($formatted['role'] ?? '') === 'voter_editor'
+            ? 'Voter Records Editor'
+            : 'Staff';
+
+        return $formatted;
+    }
+
+    private function resolvePageLabel(string $path): string
+    {
+        foreach (self::PAGE_OPTIONS as $option) {
+            if ($option['value'] === $path) {
+                return $option['label'];
+            }
+        }
+
+        if (str_contains($path, '/bow/voters') || str_contains($path, '/bow/recipients')) {
+            return 'Voter Masterlist';
+        }
+
+        if (str_contains($path, '/admin/login')) {
+            return 'Login';
+        }
+
+        return $path !== '' ? $path : 'System';
+    }
+
+    private function resolveRoleOptions(): array
+    {
+        return [
+            ['value' => 'staff', 'label' => 'Staff'],
+            ['value' => 'voter_editor', 'label' => 'Voter Records Editor'],
+        ];
+    }
+
+    private function resolveEventTypeOptions(): array
+    {
+        return [
+            ['value' => 'LOGIN', 'label' => 'Login'],
+            ['value' => 'LOGOUT', 'label' => 'Logout'],
+            ['value' => 'PAGE_VIEW', 'label' => 'Page accessed'],
+            ['value' => 'ACTION', 'label' => 'Action performed'],
+        ];
     }
 
     private function hasLogColumn(string $column): bool
