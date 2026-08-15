@@ -30,4 +30,11 @@ return [
         'region' => env('AWS_DEFAULT_REGION', 'us-east-1'),
     ],
 
+    'philsms' => [
+        'endpoint' => env('PHILSMS_API_ENDPOINT', 'https://app.philsms.com/api/v3/sms/send'),
+        'token' => env('PHILSMS_API_TOKEN'),
+        'sender_id' => env('PHILSMS_SENDER_ID'),
+        'timeout' => (int) env('PHILSMS_TIMEOUT', 15),
+    ],
+
 ];
