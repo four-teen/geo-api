@@ -14,6 +14,7 @@ use App\Http\Controllers\Api\Bow\ReligionController;
 use App\Http\Controllers\Api\Bow\TribeController;
 use App\Http\Controllers\Api\Bow\VoterImportController;
 use App\Http\Controllers\Api\Bow\VoterReportController;
+use App\Http\Controllers\Api\Bow\VoterSmsController;
 use App\Http\Controllers\Api\Staff\ActivityController;
 use Illuminate\Support\Facades\Route;
 
@@ -29,7 +30,7 @@ Route::middleware(['auth:sanctum', 'active'])->controller(AdminController::class
     Route::patch('admin/account/change-password', 'changePassword');
 });
 
-Route::middleware(['auth:sanctum', 'active', 'role:administrator'])->group(function () {
+Route::middleware(['auth:sanctum', 'active', 'password_changed', 'role:administrator'])->group(function () {
     Route::get('admin/activity-logs', [AuditLogController::class, 'index']);
     Route::get('admin/accounts/options', [AccountManagementController::class, 'options']);
     Route::get('admin/accounts', [AccountManagementController::class, 'index']);
@@ -43,7 +44,7 @@ Route::middleware(['auth:sanctum', 'active', 'role:administrator'])->group(funct
     Route::get('bow/reports/voters', [VoterReportController::class, 'index']);
 });
 
-Route::middleware(['auth:sanctum', 'active'])->group(function () {
+Route::middleware(['auth:sanctum', 'active', 'password_changed'])->group(function () {
     Route::post('staff/activity', [ActivityController::class, 'store']);
 
     Route::middleware('permission:bow.manage_geo,bow.edit_geo,bow.view_geo')->group(function () {
@@ -108,6 +109,9 @@ Route::middleware(['auth:sanctum', 'active'])->group(function () {
         Route::put('bow/voters/{id}', [RecipientController::class, 'update'])->whereNumber('id');
         Route::patch('bow/voters/{id}', [RecipientController::class, 'update'])->whereNumber('id');
         Route::put('bow/voters/{id}/household', [HouseholdController::class, 'update'])->whereNumber('id');
+        Route::post('bow/voters/{id}/sms', [VoterSmsController::class, 'store'])
+            ->whereNumber('id')
+            ->middleware('throttle:10,1');
     });
 
     Route::middleware(['permission:bow.manage_geo', 'can_delete'])->group(function () {
